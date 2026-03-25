@@ -53,6 +53,8 @@ class GameAchievementsUI final : public XamDialog {
   std::vector<Achievement> achievements_info_;
   std::map<uint32_t, std::unique_ptr<xe::ui::ImmediateTexture>>
       achievements_icons_;
+  std::map<uint32_t, std::unique_ptr<xe::ui::ImmediateTexture>>
+      achievements_icons_grayscale_;
 };
 
 }  // namespace ui

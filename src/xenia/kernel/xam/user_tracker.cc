@@ -291,6 +291,10 @@ std::vector<TitleInfo> UserTracker::GetPlayedTitles(uint64_t xuid) const {
 }
 
 void UserTracker::UpdateMissingAchievemntsIcons() {
+  if (!spa_data_) {
+    return;
+  }
+
   for (auto& user_xuid : tracked_xuids_) {
     auto user = kernel_state()->xam_state()->GetUserProfile(user_xuid);
     if (!user) {
@@ -302,17 +306,8 @@ void UserTracker::UpdateMissingAchievemntsIcons() {
       continue;
     }
 
-    for (const auto& id : game_gpd->second.GetAchievementsIds()) {
-      const auto entry = game_gpd->second.GetAchievementEntry(id);
-
-      if (!entry) {
-        continue;
-      }
-
-      if (!entry->is_achievement_unlocked()) {
-        continue;
-      }
-
+    // Add any missing achievement icons from SPA
+    for (const auto* entry : spa_data_->GetAchievements()) {
       if (!game_gpd->second.GetImage(entry->image_id).empty()) {
         continue;
       }
@@ -351,8 +346,14 @@ void UserTracker::UpdateTitleGpdFile() {
     auto user_language = spa_data_->GetExistingLanguage(
         static_cast<XLanguage>(cvars::user_language));
 
-    // First add achievements because of lowest ID
-    for (const auto& entry : spa_data_->GetAchievements()) {
+    // First add all achievement icons from SPA
+    for (const auto* entry : spa_data_->GetAchievements()) {
+      game_gpd->second.AddImage(entry->image_id,
+                                spa_data_->GetIcon(entry->image_id));
+    }
+
+    // Then add achievements because of lowest ID
+    for (const auto* entry : spa_data_->GetAchievements()) {
       AchievementDetails details(entry, spa_data_, user_language);
       game_gpd->second.AddAchievement(&details);
     }
@@ -364,7 +365,6 @@ void UserTracker::UpdateTitleGpdFile() {
     game_gpd->second.AddString(kXdbfIdTitle,
                                xe::to_utf16(spa_data_->title_name()));
 
-    // Check if we have icon for every unlocked achievements.
     FlushUserData(user_xuid);
   }
 }

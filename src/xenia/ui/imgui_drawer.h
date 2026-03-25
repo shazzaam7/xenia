@@ -69,6 +69,8 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
 
   std::unique_ptr<ImmediateTexture> LoadImGuiIcon(
       std::span<const uint8_t> data);
+  std::unique_ptr<ImmediateTexture> LoadGrayscaleIcon(
+      std::span<const uint8_t> data);
   std::map<uint32_t, std::unique_ptr<ImmediateTexture>> LoadIcons(
       IconsData data);
 

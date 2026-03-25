@@ -30,6 +30,9 @@ GameAchievementsUI::~GameAchievementsUI() {
   for (auto& entry : achievements_icons_) {
     entry.second.release();
   }
+  for (auto& entry : achievements_icons_grayscale_) {
+    entry.second.release();
+  }
 }
 
 bool GameAchievementsUI::LoadAchievementsData() {
@@ -52,6 +55,13 @@ bool GameAchievementsUI::LoadAchievementsData() {
   }
 
   achievements_icons_ = imgui_drawer()->LoadIcons(data);
+
+  // Load grayscale versions for locked achievements
+  for (const auto& entry : data) {
+    achievements_icons_grayscale_[entry.first] =
+        imgui_drawer()->LoadGrayscaleIcon(entry.second);
+  }
+
   return true;
 }
 
@@ -86,17 +96,18 @@ std::string GameAchievementsUI::GetAchievementDescription(
 
 xe::ui::ImmediateTexture* GameAchievementsUI::GetIcon(
     const Achievement& achievement_entry) const {
+  // Return grayscale icon for locked achievements
   if (!achievement_entry.IsUnlocked() && !show_locked_info_) {
-    return imgui_drawer()->GetLockedAchievementIcon();
+    if (achievements_icons_grayscale_.count(achievement_entry.image_id)) {
+      return achievements_icons_grayscale_.at(achievement_entry.image_id).get();
+    }
   }
 
   if (achievements_icons_.count(achievement_entry.image_id)) {
     return achievements_icons_.at(achievement_entry.image_id).get();
   }
 
-  if (achievement_entry.IsUnlocked()) {
-    return nullptr;
-  }
+  // Fallback to locked icon if achievement icon is missing
   return imgui_drawer()->GetLockedAchievementIcon();
 }
 
@@ -130,7 +141,7 @@ void GameAchievementsUI::DrawTitleAchievementInfo(
 
   const auto icon = GetIcon(achievement_entry);
   if (icon) {
-    ImGui::Image(reinterpret_cast<ImTextureID>(GetIcon(achievement_entry)),
+    ImGui::Image(reinterpret_cast<ImTextureID>(icon),
                  xe::ui::default_image_icon_size);
   } else {
     ImGui::Dummy(xe::ui::default_image_icon_size);

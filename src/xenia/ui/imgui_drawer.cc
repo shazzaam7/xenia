@@ -298,6 +298,43 @@ std::unique_ptr<ImmediateTexture> ImGuiDrawer::LoadImGuiIcon(
   return texture;
 }
 
+std::unique_ptr<ImmediateTexture> ImGuiDrawer::LoadGrayscaleIcon(
+    std::span<const uint8_t> data) {
+  if (!immediate_drawer_) {
+    return {};
+  }
+
+  int width, height, channels;
+  unsigned char* image_data =
+      stbi_load_from_memory(data.data(), static_cast<int>(data.size()), &width,
+                            &height, &channels, STBI_rgb_alpha);
+  if (!image_data) {
+    return {};
+  }
+
+  // Convert to grayscale
+  for (int i = 0; i < width * height * 4; i += 4) {
+    unsigned char r = image_data[i];
+    unsigned char g = image_data[i + 1];
+    unsigned char b = image_data[i + 2];
+    // Luminance formula for grayscale conversion
+    unsigned char gray =
+        static_cast<unsigned char>(0.299f * r + 0.587f * g + 0.114f * b);
+    image_data[i] = gray;
+    image_data[i + 1] = gray;
+    image_data[i + 2] = gray;
+    // Alpha channel remains unchanged
+  }
+
+  auto texture = immediate_drawer_->CreateTexture(
+      width, height, ImmediateTextureFilter::kLinear, true,
+      reinterpret_cast<uint8_t*>(image_data));
+
+  stbi_image_free(image_data);
+
+  return texture;
+}
+
 std::map<uint32_t, std::unique_ptr<ImmediateTexture>> ImGuiDrawer::LoadIcons(
     IconsData data) {
   std::map<uint32_t, std::unique_ptr<ImmediateTexture>> icons_;
