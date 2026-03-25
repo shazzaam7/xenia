@@ -132,7 +132,6 @@ jobs:
 
           echo "=== Release assets ==="
           ls -lh release_assets/
-
       # --- Create the release ---
 
       - name: Create GitHub Release
