@@ -42,7 +42,7 @@ jobs:
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
 
-           PREV_TAG=$(git describe --tags --abbrev=0 "${FULL_SHA}^" 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 "${FULL_SHA}^" 2>/dev/null || echo "")
 
           if [ -n "${PREV_TAG}" ]; then
             PREV_SHA=$(git rev-parse "${PREV_TAG}^{}" 2>/dev/null || \
@@ -159,6 +159,7 @@ jobs:
               --repo "${REPO}" \
               --title "${TITLE}" \
               --notes-file release_notes.md \
+              --target "${TARGET}" \
               --latest \
               release_assets/*
           fi
