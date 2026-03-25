@@ -42,11 +42,7 @@ jobs:
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "title=${TITLE}" >> "$GITHUB_OUTPUT"
 
-          PREV_TAG=$(gh release list \
-            --repo "${REPO}" \
-            --limit 1 \
-            --json tagName \
-            --jq '.[0].tagName' 2>/dev/null || echo "")
+           PREV_TAG=$(git describe --tags --abbrev=0 "${FULL_SHA}^" 2>/dev/null || echo "")
 
           if [ -n "${PREV_TAG}" ]; then
             PREV_SHA=$(git rev-parse "${PREV_TAG}^{}" 2>/dev/null || \

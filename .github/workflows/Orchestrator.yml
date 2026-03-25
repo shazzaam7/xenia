@@ -75,7 +75,6 @@ jobs:
     needs: [build-windows, build-linux]
     if: |
       always() &&
-      github.repository == 'xenia-canary/xenia-canary' &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/canary_experimental' &&
       (needs.build-windows.result == 'success' && needs.build-linux.result == 'success')
