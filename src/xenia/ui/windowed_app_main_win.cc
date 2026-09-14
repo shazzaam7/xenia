@@ -15,7 +15,15 @@
 #include "xenia/base/platform_win.h"
 #include "xenia/kernel/kernel_state.cc"
 #include "xenia/ui/windowed_app.h"
+
+#ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_host.h"
+#include "xenia/app/wx/wx_window.h"
+
+#include <wx/app.h>
+#else
 #include "xenia/ui/windowed_app_context_win.h"
+#endif
 
 #include "version.h"
 
@@ -320,9 +328,13 @@ int WINAPI wWinMain(HINSTANCE hinstance, HINSTANCE hinstance_prev,
   int result;
   SetUnhandledExceptionFilter(_UnhandledExceptionFilter);
   {
+#ifdef XENIA_HAS_WX_UI
+    xe::app::wx_ui::WxWindowedAppContext app_context(hinstance, show_cmd);
+#else
     xe::ui::Win32WindowedAppContext app_context(hinstance, show_cmd);
     // TODO(Triang3l): Initialize creates a window. Set DPI awareness via the
     // manifest.
+#endif
     if (!app_context.Initialize()) {
       return EXIT_FAILURE;
     }
@@ -343,6 +355,19 @@ int WINAPI wWinMain(HINSTANCE hinstance, HINSTANCE hinstance_prev,
 
     xe::InitializeWin32App(app->GetName());
 
+#ifdef XENIA_HAS_WX_UI
+    // Hand the app to the wxWidgets application object; wxEntry() runs
+    // WxApp::OnInit (which calls app->OnInitialize()) and then the wxWidgets
+    // main loop, replacing Win32WindowedAppContext::RunMainMessageLoop.
+    // wxEntry() without arguments uses the current process command line,
+    // which was already parsed above.
+    xe::app::wx_ui::WxHostParams host_params;
+    host_params.app = app.get();
+    host_params.result = EXIT_SUCCESS;
+    xe::app::wx_ui::SetWxHostParams(&host_params);
+    wxEntry();
+    result = host_params.result;
+#else
     if (app->OnInitialize()) {
       // TODO(Triang3l): Rework this, need to initialize the console properly,
       // disable has_console_attached_ by default in windowed apps, and attach
@@ -354,6 +379,7 @@ int WINAPI wWinMain(HINSTANCE hinstance, HINSTANCE hinstance_prev,
     } else {
       result = EXIT_FAILURE;
     }
+#endif
 
     app->InvokeOnDestroy();
   }
