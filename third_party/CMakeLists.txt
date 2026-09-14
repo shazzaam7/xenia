@@ -384,6 +384,62 @@ if(WIN32)
 endif()
 
 # ==============================================================================
+# wxWidgets (UI shell, see src/xenia/app/wx)
+# Source: third_party/wxwidgets submodule (https://github.com/wxWidgets/wxWidgets.git).
+# Override with -DWXWIDGETS_SOURCE_DIR=<path> for a local checkout.
+# ==============================================================================
+if(XENIA_WX_UI)
+  set(WXWIDGETS_SOURCE_DIR "${PROJECT_SOURCE_DIR}/third_party/wxwidgets"
+      CACHE PATH "wxWidgets source directory")
+  if(NOT EXISTS "${WXWIDGETS_SOURCE_DIR}/CMakeLists.txt"
+     AND EXISTS "D:/Development/wxWidgets/CMakeLists.txt")
+    # Dev fallback: use the sibling checkout when the submodule is missing.
+    set(WXWIDGETS_SOURCE_DIR "D:/Development/wxWidgets"
+        CACHE PATH "wxWidgets source directory" FORCE)
+  endif()
+  if(EXISTS "${WXWIDGETS_SOURCE_DIR}/CMakeLists.txt")
+    # Lean static build: only what the UI shell needs.
+    set(wxBUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(wxBUILD_SAMPLES OFF CACHE STRING "" FORCE)
+    set(wxBUILD_TESTS OFF CACHE STRING "" FORCE)
+    set(wxBUILD_DEMOS OFF CACHE BOOL "" FORCE)
+    set(wxBUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(wxBUILD_INSTALL OFF CACHE BOOL "" FORCE)
+    # Canary supplies its own exe manifest (src/xenia/base/app_win32.manifest).
+    set(wxUSE_DPI_AWARE_MANIFEST "none" CACHE STRING "" FORCE)
+    # Trim heavy optional components not used by the shell.
+    set(wxUSE_WEBVIEW OFF CACHE BOOL "" FORCE)
+    set(wxUSE_MEDIACTRL OFF CACHE BOOL "" FORCE)
+    set(wxUSE_STC OFF CACHE BOOL "" FORCE)
+    set(wxUSE_LIBWEBP OFF CACHE STRING "" FORCE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      # No OpenGL canvas, web requests, secret store, SDL audio, desktop
+      # notifications or joystick usage in the shell; avoids extra system
+      # dependencies beyond GTK3/X11 (already required by the emulator).
+      set(wxUSE_OPENGL OFF CACHE BOOL "" FORCE)
+      set(wxUSE_WEBREQUEST OFF CACHE BOOL "" FORCE)
+      set(wxUSE_SECRETSTORE OFF CACHE BOOL "" FORCE)
+      set(wxUSE_LIBSDL OFF CACHE BOOL "" FORCE)
+      set(wxUSE_LIBNOTIFY OFF CACHE BOOL "" FORCE)
+      set(wxUSE_JOYSTICK OFF CACHE BOOL "" FORCE)
+    endif()
+    if(MSVC)
+      set(wxBUILD_MSVC_MULTIPROC ON CACHE BOOL "" FORCE)
+    endif()
+    add_subdirectory("${WXWIDGETS_SOURCE_DIR}"
+                     "${CMAKE_BINARY_DIR}/third_party/wxwidgets"
+                     EXCLUDE_FROM_ALL)
+    set(XENIA_WX_AVAILABLE ON CACHE INTERNAL "wxWidgets is available")
+  else()
+    message(WARNING "XENIA_WX_UI is ON but no wxWidgets source was found. "
+                    "Init third_party/wxwidgets or set WXWIDGETS_SOURCE_DIR.")
+    set(XENIA_WX_AVAILABLE OFF CACHE INTERNAL "wxWidgets is available")
+  endif()
+else()
+  set(XENIA_WX_AVAILABLE OFF CACHE INTERNAL "wxWidgets is available")
+endif()
+
+# ==============================================================================
 # SDL2
 # ==============================================================================
 if(WIN32)

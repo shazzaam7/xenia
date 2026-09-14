@@ -329,6 +329,12 @@ class Window {
   // necessarily be true immediately.
   void Focus();
 
+  // Platform native handle for interop (an HWND on Windows), or nullptr if
+  // there is no native window. Used, for instance, by the presenter to find
+  // the monitor showing the surface, without depending on a specific Window
+  // implementation.
+  virtual void* GetNativeHandle() const { return nullptr; }
+
   // TODO(Triang3l): A resize function, primarily for snapping externally to
   // 1280x720, 1920x1080, and other 1:1 resolutions. It will need to resize the
   // window (to a desired logical size - the actual physical size is entirely

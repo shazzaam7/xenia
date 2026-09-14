@@ -14,5 +14,11 @@ if(XENIA_BUILD_MISC)
   target_link_libraries(xenia-ui-window-d3d12-demo PRIVATE
     fmt imgui xenia-base xenia-ui xenia-ui-d3d12
   )
+  if(TARGET xenia-app-wx)
+    # Provides Window::Create etc. when the native backend is replaced by wx.
+    target_link_libraries(xenia-ui-window-d3d12-demo PRIVATE xenia-app-wx)
+    target_compile_definitions(xenia-ui-window-d3d12-demo PRIVATE
+                               XENIA_HAS_WX_UI)
+  endif()
   xe_target_defaults(xenia-ui-window-d3d12-demo)
 endif()
