@@ -97,6 +97,12 @@ target_link_libraries(xenia-app PRIVATE
   xenia-hid-keyboard
 )
 
+# wxWidgets UI shell (entry points take the wx path when this is available).
+if(TARGET xenia-app-wx)
+  target_link_libraries(xenia-app PRIVATE xenia-app-wx)
+  target_compile_definitions(xenia-app PRIVATE XENIA_HAS_WX_UI)
+endif()
+
 # Architecture-specific backend
 if(XE_TARGET_X86_64)
   target_link_libraries(xenia-app PRIVATE xenia-cpu-backend-x64)

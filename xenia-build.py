@@ -662,7 +662,9 @@ def git_submodule_update():
         "sync",
         *submodules,
         ])
-    # Then update all submodules to their recorded commits
+    # Then update all submodules to their recorded commits.
+    # Recursive: third_party/wxwidgets bundles its own dependencies (zlib,
+    # libpng, etc.) as nested submodules.
     shell_call([
         "git",
         "-c",
@@ -670,6 +672,7 @@ def git_submodule_update():
         "submodule",
         "update",
         "--init",
+        "--recursive",
         "--depth=1",
         "-j", f"{os.cpu_count()}",
         *submodules,
