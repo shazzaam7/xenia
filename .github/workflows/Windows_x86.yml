@@ -61,7 +61,9 @@ jobs:
       - name: Download submodules
         run: |- # Exclude unneeded submodules
           $SUBMODULES=(Select-String -CaseSensitive '(?<=path = )(?!third_party\/xbyak_aarch64).+' .gitmodules).Matches.Value
-          git submodule update --init --depth=1 -j $env:NUMBER_OF_PROCESSORS $SUBMODULES
+          # Recursive: third_party/wxwidgets bundles its own dependencies as
+          # nested submodules.
+          git submodule update --init --recursive --depth=1 -j $env:NUMBER_OF_PROCESSORS $SUBMODULES
 
       - name: Build Xenia
         run: python xenia-build.py build --config=Release --target=xenia-app

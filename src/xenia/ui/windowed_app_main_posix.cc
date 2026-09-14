@@ -14,7 +14,15 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/ui/windowed_app.h"
+
+#ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_host.h"
+#include "xenia/app/wx/wx_window.h"
+
+#include <wx/app.h>
+#else
 #include "xenia/ui/windowed_app_context_gtk.h"
+#endif
 
 int main(int argc_pre_gtk, char** argv_pre_gtk) {
   // Before touching anything GTK+, make sure that when running on Wayland,
@@ -41,7 +49,11 @@ int main(int argc_pre_gtk, char** argv_pre_gtk) {
   int result;
 
   {
+#ifdef XENIA_HAS_WX_UI
+    xe::app::wx_ui::WxWindowedAppContext app_context;
+#else
     xe::ui::GTKWindowedAppContext app_context;
+#endif
 
     std::unique_ptr<xe::ui::WindowedApp> app =
         xe::ui::GetWindowedAppCreator()(app_context);
@@ -53,12 +65,24 @@ int main(int argc_pre_gtk, char** argv_pre_gtk) {
     // Initialize logging. Needs parsed cvars.
     xe::InitializeLogging(app->GetName());
 
+#ifdef XENIA_HAS_WX_UI
+    // Hand the app to the wxWidgets application object; wxEntry() runs
+    // WxApp::OnInit (which calls app->OnInitialize()) and then the wxWidgets
+    // main loop, replacing GTKWindowedAppContext::RunMainGTKLoop.
+    xe::app::wx_ui::WxHostParams host_params;
+    host_params.app = app.get();
+    host_params.result = EXIT_SUCCESS;
+    xe::app::wx_ui::SetWxHostParams(&host_params);
+    wxEntry(argc_post_gtk, argv_post_gtk);
+    result = host_params.result;
+#else
     if (app->OnInitialize()) {
       app_context.RunMainGTKLoop();
       result = EXIT_SUCCESS;
     } else {
       result = EXIT_FAILURE;
     }
+#endif
 
     app->InvokeOnDestroy();
   }
