@@ -37,6 +37,7 @@ class Win32Window : public Window {
   // Will be null if the window hasn't been successfully opened yet, or has been
   // closed.
   HWND hwnd() const { return hwnd_; }
+  void* GetNativeHandle() const override { return hwnd_; }
 
   uint32_t GetMediumDpi() const override;
 
