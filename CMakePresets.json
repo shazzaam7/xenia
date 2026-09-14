@@ -13,6 +13,16 @@
       "binaryDir": "${sourceDir}/build"
     },
     {
+      "name": "clion-win",
+      "displayName": "CLion (Windows)",
+      "inherits": "default",
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
+      }
+    },
+    {
       "name": "vs",
       "displayName": "Visual Studio 2022",
       "generator": "Visual Studio 17 2022",
