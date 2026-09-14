@@ -30,6 +30,12 @@ if(XENIA_BUILD_MISC)
   target_link_libraries(xenia-ui-window-vulkan-demo PRIVATE
     fmt imgui xenia-base xenia-ui xenia-ui-vulkan
   )
+  if(TARGET xenia-app-wx)
+    # Provides Window::Create etc. when the native backend is replaced by wx.
+    target_link_libraries(xenia-ui-window-vulkan-demo PRIVATE xenia-app-wx)
+    target_compile_definitions(xenia-ui-window-vulkan-demo PRIVATE
+                               XENIA_HAS_WX_UI)
+  endif()
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(xenia-ui-window-vulkan-demo PRIVATE X11 xcb X11-xcb)
   endif()
