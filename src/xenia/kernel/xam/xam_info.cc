@@ -485,7 +485,7 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
     xam->SaveLoaderData();
     title = "Title was restarted";
     message =
-        "Title closed with new launch data. \nPlease restart Xenia. "
+        "Title closed with new launch data. \nRe-launch it from the library. "
         "Game will be loaded automatically.";
   } else {
     title = "Title terminated";
@@ -509,13 +509,18 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
 
             config::SaveConfig();
             xe::FlushLog();
-
-            std::quick_exit(0);
           }).detach();
         });
   }
 
-  // This function does not return.
+  // This function does not return: the current (guest) thread dies inside
+  // TerminateTitle, so emulator state cleanup is queued on the UI thread
+  // first (it fires on_terminate, which returns to the library).
+  auto emulator = kernel_state()->emulator();
+  if (display_window) {
+    display_window->app_context().CallInUIThread(
+        [emulator]() { emulator->OnGuestTitleTerminated(); });
+  }
   kernel_state()->TerminateTitle();
 }
 DECLARE_XAM_EXPORT1(XamLoaderLaunchTitle, kNone, kSketchy);
@@ -541,13 +546,18 @@ void XamLoaderTerminateTitle_entry() {
 
             config::SaveConfig();
             xe::FlushLog();
-
-            std::quick_exit(0);
           }).detach();
         });
   }
 
-  // This function does not return.
+  // This function does not return: the current (guest) thread dies inside
+  // TerminateTitle, so emulator state cleanup is queued on the UI thread
+  // first (it fires on_terminate, which returns to the library).
+  auto emulator = kernel_state()->emulator();
+  if (display_window) {
+    display_window->app_context().CallInUIThread(
+        [emulator]() { emulator->OnGuestTitleTerminated(); });
+  }
   kernel_state()->TerminateTitle();
 }
 DECLARE_XAM_EXPORT1(XamLoaderTerminateTitle, kNone, kSketchy);

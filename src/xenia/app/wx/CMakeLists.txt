@@ -12,7 +12,16 @@ endif()
 add_library(xenia-app-wx OBJECT
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_app.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_app.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_art.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_art.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_model.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_scan.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_scan.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_host.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_store.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_store.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_view.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_view.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_util.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_window.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_window.h
