@@ -194,6 +194,12 @@ class Emulator {
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
 
+  // Clears title state after a guest-initiated exit (XamLoaderTerminateTitle
+  // and friends), where the calling guest thread dies inside
+  // KernelState::TerminateTitle and never returns. Must run on the UI thread;
+  // fires on_terminate like TerminateTitle does.
+  void OnGuestTitleTerminated();
+
   const std::unique_ptr<vfs::Device> CreateVfsDevice(
       const std::filesystem::path& path, const std::string_view mount_path);
 
