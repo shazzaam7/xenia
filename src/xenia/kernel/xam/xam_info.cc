@@ -476,47 +476,26 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
   auto& loader_data = xam->loader_data();
   loader_data.launch_flags = flags;
 
-  std::string title;
-  std::string message;
-
   // Translate the launch path to a full path.
+  std::string host_path;
   if (raw_name_ptr && !raw_name_ptr.value().empty()) {
     loader_data.launch_path = xe::path_to_utf8(raw_name_ptr.value());
     xam->SaveLoaderData();
-    title = "Title was restarted";
-    message =
-        "Title closed with new launch data. \nRe-launch it from the library. "
-        "Game will be loaded automatically.";
-  } else {
-    title = "Title terminated";
-    message = "Game requested exit to dashboard.";
-    assert_always("Game requested exit to dashboard via XamLoaderLaunchTitle");
+    // host_path keeps the current title's host path (set at boot) so the app
+    // layer can relaunch into the requested module.
+    host_path = loader_data.host_path;
   }
 
-  auto display_window = kernel_state()->emulator()->display_window();
-  auto imgui_drawer = kernel_state()->emulator()->imgui_drawer();
-
-  if (display_window && imgui_drawer) {
-    display_window->app_context().CallInUIThreadSynchronous(
-        [imgui_drawer, title, message]() {
-          auto dialog = xe::ui::ImGuiDialog::ShowMessageBox(
-              imgui_drawer, title.c_str(), message.c_str());
-
-          std::jthread([dialog]() {
-            while (!dialog->IsClosing()) {
-              std::this_thread::yield();
-            }
-
-            config::SaveConfig();
-            xe::FlushLog();
-          }).detach();
-        });
+  if (kernel_state()->ExitToDashboard(host_path, loader_data.launch_path,
+                                      loader_data.launch_flags,
+                                      loader_data.launch_data)) {
+    return;
   }
 
-  // This function does not return: the current (guest) thread dies inside
-  // TerminateTitle, so emulator state cleanup is queued on the UI thread
-  // first (it fires on_terminate, which returns to the library).
+  // No app layer to handle the relaunch (e.g. headless): fall back to
+  // terminating to an empty dashboard state.
   auto emulator = kernel_state()->emulator();
+  auto display_window = emulator->display_window();
   if (display_window) {
     display_window->app_context().CallInUIThread(
         [emulator]() { emulator->OnGuestTitleTerminated(); });
@@ -526,34 +505,16 @@ void XamLoaderLaunchTitle_entry(lpstring_t raw_name_ptr, dword_t flags) {
 DECLARE_XAM_EXPORT1(XamLoaderLaunchTitle, kNone, kSketchy);
 
 void XamLoaderTerminateTitle_entry() {
-  std::string title = "Title terminated";
-  std::string message = "Game requested exit to dashboard.";
-  assert_always("Game requested exit to dashboard via XamLoaderTerminateTitle");
+  XELOGI("Game requested exit to dashboard via XamLoaderTerminateTitle");
 
-  auto display_window = kernel_state()->emulator()->display_window();
-  auto imgui_drawer = kernel_state()->emulator()->imgui_drawer();
-
-  if (display_window && imgui_drawer) {
-    display_window->app_context().CallInUIThreadSynchronous(
-        [imgui_drawer, title, message]() {
-          auto dialog = xe::ui::ImGuiDialog::ShowMessageBox(
-              imgui_drawer, title.c_str(), message.c_str());
-
-          std::jthread([dialog]() {
-            while (!dialog->IsClosing()) {
-              std::this_thread::yield();
-            }
-
-            config::SaveConfig();
-            xe::FlushLog();
-          }).detach();
-        });
+  if (kernel_state()->ExitToDashboard({}, {}, 0, {})) {
+    return;
   }
 
-  // This function does not return: the current (guest) thread dies inside
-  // TerminateTitle, so emulator state cleanup is queued on the UI thread
-  // first (it fires on_terminate, which returns to the library).
+  // No app layer to handle the exit (e.g. headless): fall back to the legacy
+  // suicide path.
   auto emulator = kernel_state()->emulator();
+  auto display_window = emulator->display_window();
   if (display_window) {
     display_window->app_context().CallInUIThread(
         [emulator]() { emulator->OnGuestTitleTerminated(); });

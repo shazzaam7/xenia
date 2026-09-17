@@ -884,22 +884,17 @@ dword_result_t xeXamContentLaunchImage(dword_t user_index,
 
   xam->SaveLoaderData();
 
-  auto display_window = kernel_state()->emulator()->display_window();
-  auto imgui_drawer = kernel_state()->emulator()->imgui_drawer();
-
-  if (display_window && imgui_drawer) {
-    display_window->app_context().CallInUIThreadSynchronous([imgui_drawer]() {
-      xe::ui::ImGuiDialog::ShowMessageBox(
-          imgui_drawer, "Launching new title!",
-          "Launching a new title while one is running is not supported. \nThe "
-          "current title was closed; pick the next title from the library.");
-    });
+  auto emulator = kernel_state()->emulator();
+  if (kernel_state()->ExitToDashboard(xe::path_to_utf8(host_path),
+                                      xex_path.value(), 0, {})) {
+    return X_ERROR_SUCCESS;
   }
 
-  // The current (guest) thread dies inside TerminateTitle, so emulator state
-  // cleanup is queued on the UI thread first (it fires on_terminate, which
-  // returns to the library).
-  auto emulator = kernel_state()->emulator();
+  // No app layer to handle the relaunch (e.g. headless): fall back to the
+  // legacy path, which terminates to an empty dashboard state. The current
+  // (guest) thread dies inside TerminateTitle, so emulator state cleanup is
+  // queued on the UI thread first (it fires on_terminate).
+  auto display_window = emulator->display_window();
   if (display_window) {
     display_window->app_context().CallInUIThread(
         [emulator]() { emulator->OnGuestTitleTerminated(); });

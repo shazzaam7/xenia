@@ -41,6 +41,10 @@ class XamModule : public KernelModule {
 
   void LoadLoaderData();
   void SaveLoaderData();
+  // Deletes any persisted loader data without touching the in-memory state.
+  // Called once a guest-requested relaunch has been consumed in-process so a
+  // later restart doesn't replay the stale request.
+  void ClearSavedLoaderData();
 
   void SetLaunchCallback(uint32_t callback) { callback_ = callback; }
 
