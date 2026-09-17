@@ -891,11 +891,19 @@ dword_result_t xeXamContentLaunchImage(dword_t user_index,
     display_window->app_context().CallInUIThreadSynchronous([imgui_drawer]() {
       xe::ui::ImGuiDialog::ShowMessageBox(
           imgui_drawer, "Launching new title!",
-          "Launching new title. \nPlease close Xenia and launch it again. Game "
-          "should load automatically.");
+          "Launching a new title while one is running is not supported. \nThe "
+          "current title was closed; pick the next title from the library.");
     });
   }
 
+  // The current (guest) thread dies inside TerminateTitle, so emulator state
+  // cleanup is queued on the UI thread first (it fires on_terminate, which
+  // returns to the library).
+  auto emulator = kernel_state()->emulator();
+  if (display_window) {
+    display_window->app_context().CallInUIThread(
+        [emulator]() { emulator->OnGuestTitleTerminated(); });
+  }
   kernel_state()->TerminateTitle();
   return X_ERROR_SUCCESS;
 }
