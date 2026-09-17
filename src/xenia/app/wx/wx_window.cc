@@ -17,7 +17,10 @@
 #include "xenia/app/wx/wx_window_priv.h"
 
 #include <wx/app.h>
+#include <wx/button.h>
+#include <wx/checkbox.h>
 #include <wx/dcclient.h>
+#include <wx/dialog.h>
 #include <wx/dirdlg.h>
 #include <wx/dnd.h>
 #include <wx/filedlg.h>
@@ -26,11 +29,16 @@
 #include <wx/msgdlg.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
+#include <wx/stattext.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
 
+#include <algorithm>
+#include <cctype>
+
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
+#include "xenia/base/logging.h"
 
 #if defined(__WXMSW__)
 #include <Dbt.h>
@@ -675,12 +683,14 @@ void WxWindowedAppContext::PlatformQuitFromUIThread() {
 }
 
 void WxWindow::AttachLibrary(LibraryBootCallback on_boot,
-                             const std::filesystem::path& storage_root) {
+                             const std::filesystem::path& storage_root,
+                             const std::filesystem::path& content_root) {
   if (library_view_ || !frame_ || !view_) {
     return;
   }
   library_on_boot_ = std::move(on_boot);
   library_storage_root_ = storage_root;
+  library_content_root_ = content_root;
   LoadLibrary(library_storage_root_, library_entries_);
 
   book_ = new wxSimplebook(frame_, wxID_ANY);
@@ -694,6 +704,7 @@ void WxWindow::AttachLibrary(LibraryBootCallback on_boot,
   frame_->GetSizer()->Add(book_, 1, wxEXPAND);
   frame_->Layout();
   library_view_->SetEntries(library_entries_);
+  ScanInstalledGames();
   ShowLibrary();
 }
 
@@ -754,17 +765,176 @@ void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
   ImportLibraryPaths(DiscoverGameFiles(dir));
 }
 
+void WxWindow::ScanInstalledGames() {
+  if (!library_view_ || library_content_root_.empty()) {
+    return;
+  }
+  // Only feed in paths not already listed so the progress dialog stays hidden
+  // when nothing new was installed.
+  std::vector<std::filesystem::path> fresh;
+  for (const auto& path : DiscoverInstalledGames(library_content_root_)) {
+    bool known = false;
+    for (const auto& entry : library_entries_) {
+      for (const auto& disc : entry.discs) {
+        std::error_code ec = {};
+        if (std::filesystem::equivalent(disc.path, path, ec)) {
+          known = true;
+          break;
+        }
+      }
+      if (known) {
+        break;
+      }
+    }
+    if (!known) {
+      fresh.push_back(path);
+    }
+  }
+  ImportLibraryPaths(fresh);
+}
+
+namespace {
+
+std::string LowerAscii(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    out += char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return out;
+}
+
+// Normalizes for comparison: resolves junctions/symlinks and separator or
+// case differences so content-tree membership checks don't miss.
+std::filesystem::path NormalizedForCompare(std::filesystem::path path) {
+  std::error_code ec = {};
+  auto canonical = std::filesystem::weakly_canonical(path, ec);
+  if (!ec) {
+    return canonical;
+  }
+  return path.lexically_normal();
+}
+
+// Resolves a library disc path to the top-level item to delete inside
+// <common>/<TITLEID>/000D0000: the package file itself, or the extracted
+// directory holding its default.xex. Empty when the disc isn't managed
+// install content.
+std::filesystem::path ContentItemForDisc(
+    const std::filesystem::path& common_dir,
+    const std::filesystem::path& disc_path) {
+  const auto common = NormalizedForCompare(common_dir);
+  std::error_code ec = {};
+  auto relative =
+      std::filesystem::relative(NormalizedForCompare(disc_path), common, ec);
+  if (ec || relative.empty() || relative.is_absolute()) {
+    return {};
+  }
+  std::vector<std::string> parts;
+  for (const auto& comp : relative) {
+    parts.push_back(comp.string());
+    if (parts.size() == 3) {
+      break;
+    }
+  }
+  // <TITLEID>/000D0000/<item>[/...] is required.
+  if (parts.size() < 3 || parts[0] == ".." ||
+      LowerAscii(parts[1]) != "000d0000") {
+    return {};
+  }
+  return common / parts[0] / parts[1] / parts[2];
+}
+
+// Deletes a content item, then prunes parent directories left empty, up to
+// (not including) the shared content tree root.
+void DeleteContentItem(const std::filesystem::path& common_dir,
+                       const std::filesystem::path& target) {
+  const auto common = NormalizedForCompare(common_dir);
+  if (target.empty() || target == common) {
+    return;
+  }
+  std::error_code ec = {};
+  auto relative = std::filesystem::relative(target, common, ec);
+  if (ec || relative.empty() || relative.is_absolute() ||
+      *relative.begin() == std::filesystem::path("..")) {
+    return;
+  }
+  std::filesystem::remove_all(target, ec);
+  if (ec) {
+    XELOGE("Library: failed to delete content path {} ({})",
+           xe::path_to_utf8(target), ec.message());
+    return;
+  }
+  auto dir = target.parent_path();
+  while (!dir.empty() && dir != common) {
+    std::error_code ec2 = {};
+    if (!std::filesystem::is_empty(dir, ec2) || ec2) {
+      break;
+    }
+    std::filesystem::remove(dir, ec2);
+    if (ec2) {
+      break;
+    }
+    dir = dir.parent_path();
+  }
+}
+
+}  // namespace
+
 void WxWindow::RemoveLibraryEntry(size_t index) {
   if (index >= library_entries_.size() || !library_view_) {
     return;
   }
   const auto& entry = library_entries_[index];
-  if (wxMessageBox(WxLabel("Remove \"" + entry.name +
-                           "\" from the library?\n"
-                           "Game files on disk are kept."),
-                   "Remove game", wxYES_NO | wxICON_QUESTION,
-                   library_view_) != wxYES) {
-    return;
+  // Discs living under the shared content tree can be deleted along with the
+  // entry when asked.
+  std::vector<std::filesystem::path> content_targets;
+  if (!library_content_root_.empty()) {
+    const auto common_dir = library_content_root_ / "0000000000000000";
+    for (const auto& disc : entry.discs) {
+      auto target = ContentItemForDisc(common_dir, disc.path);
+      if (!target.empty() &&
+          std::find(content_targets.begin(), content_targets.end(), target) ==
+              content_targets.end()) {
+        content_targets.push_back(std::move(target));
+      }
+    }
+  }
+  bool delete_content = false;
+  {
+    wxDialog dialog(library_view_, wxID_ANY, WxLabel("Remove game"));
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    sizer->Add(
+        new wxStaticText(
+            &dialog, wxID_ANY,
+            WxLabel("Remove \"" + entry.name +
+                    "\" from the library?\nGame files on disk are kept.")),
+        0, wxALL, 10);
+    wxCheckBox* check = nullptr;
+    if (!content_targets.empty()) {
+      check = new wxCheckBox(
+          &dialog, wxID_ANY,
+          WxLabel("Also delete the game files from the content folder"));
+      sizer->Add(check, 0, wxLEFT | wxRIGHT | wxBOTTOM, 10);
+    }
+    auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+    buttons->AddStretchSpacer(1);
+    // NOTE: the affirmative button must use a dialog-closing standard ID
+    // (wxID_OK) - others like wxID_REMOVE swallow clicks without ending the
+    // modal loop.
+    auto* remove_button = new wxButton(&dialog, wxID_OK, WxLabel("&Remove"));
+    remove_button->SetDefault();
+    buttons->Add(remove_button, 0, wxRIGHT, 5);
+    buttons->Add(new wxButton(&dialog, wxID_CANCEL), 0);
+    sizer->Add(buttons, 0, wxEXPAND | wxALL, 10);
+    dialog.SetSizerAndFit(sizer);
+    if (dialog.ShowModal() != wxID_OK) {
+      return;
+    }
+    delete_content = check && check->GetValue();
+  }
+  if (delete_content) {
+    for (const auto& target : content_targets) {
+      DeleteContentItem(library_content_root_ / "0000000000000000", target);
+    }
   }
   std::error_code ec = {};
   std::filesystem::remove_all(ArtworkDir(library_storage_root_, entry.title_id),
@@ -792,17 +962,22 @@ void WxWindow::OnShowInFolder(size_t index) {
   if (!entry || entry->discs.empty()) {
     return;
   }
-#if defined(__WXMSW__)
-  wxExecute("explorer /select,\"" +
-            WxLabel(xe::path_to_utf8(entry->discs[0].path)) + "\"");
-#else
-  std::filesystem::path dir = entry->discs[0].path;
+
   std::error_code ec = {};
-  if (!std::filesystem::is_directory(dir, ec)) {
-    dir = dir.parent_path();
+  const auto target = entry->discs[0].path;
+  const bool is_dir = std::filesystem::is_directory(target, ec);
+  if (ec || (!is_dir && !std::filesystem::is_regular_file(target, ec))) {
+    wxMessageBox(WxLabel("File not found:\n" + xe::path_to_utf8(target)),
+                 WxLabel("Show in Folder"), wxOK | wxICON_ERROR, library_view_);
+    return;
   }
-  wxExecute("xdg-open \"" + WxLabel(xe::path_to_utf8(dir)) + "\"");
-#endif
+
+  const auto folder = is_dir ? target : target.parent_path();
+
+  // TODO: Verify if this works on all platforms
+  if (!wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(folder)))) {
+    XELOGE("Library: failed to open folder {}", xe::path_to_utf8(folder));
+  }
 }
 
 void WxWindow::OnAddGame() {

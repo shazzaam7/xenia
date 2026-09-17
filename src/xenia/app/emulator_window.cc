@@ -53,6 +53,7 @@
 #include "xenia/ui/virtual_key.h"
 
 #ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_content_install_dialog.h"
 #include "xenia/app/wx/wx_window.h"
 #endif
 
@@ -983,7 +984,7 @@ bool EmulatorWindow::Initialize() {
           [this](size_t index, int disc, const std::filesystem::path& path) {
             LibraryBoot(index, disc, path);
           },
-          emulator_->storage_root());
+          emulator_->storage_root(), emulator_->content_root());
 #endif
 
   Profiler::SetUserIO(kZOrderProfiler, window_.get(), nullptr, nullptr);
@@ -1457,6 +1458,79 @@ void EmulatorWindow::ShowGame() {
 #endif
 }
 
+namespace {
+
+bool IsPathInside(const std::filesystem::path& path,
+                  const std::filesystem::path& root) {
+  std::error_code ec = {};
+  auto relative = std::filesystem::relative(path, root, ec);
+  if (ec || relative.empty() || relative.is_absolute()) {
+    return false;
+  }
+  return *relative.begin() != std::filesystem::path("..");
+}
+
+}  // namespace
+
+void EmulatorWindow::AddInstalledContentToLibrary(
+    const std::shared_ptr<std::vector<Emulator::ContentInstallEntry>>& entries,
+    bool only_inside_content) {
+  std::vector<std::filesystem::path> scan;
+  const auto content_root = emulator_->content_root();
+  for (auto& entry : *entries) {
+    if (entry.installation_state_ != Emulator::InstallState::installed) {
+      continue;
+    }
+    if (!only_inside_content &&
+        entry.content_type_ != xe::XContentType::kInstalledGame &&
+        entry.content_type_ != xe::XContentType::kArcadeTitle &&
+        entry.content_type_ != xe::XContentType::kXbox360Title &&
+        entry.content_type_ != xe::XContentType::kGameDemo) {
+      continue;
+    }
+    auto final_path = entry.data_installation_path_ / entry.filename_;
+    if (only_inside_content && !IsPathInside(final_path, content_root)) {
+      continue;
+    }
+    std::error_code ec = {};
+    if (std::filesystem::is_directory(final_path, ec)) {
+      // Extracted package: launchable default.xex in file form.
+      bool found = false;
+      for (const auto& e :
+           std::filesystem::directory_iterator(final_path, ec)) {
+        if (ec) {
+          break;
+        }
+        std::error_code ec2 = {};
+        if (e.is_regular_file(ec2) &&
+            xe::utf8::lower_ascii(e.path().filename().string()) ==
+                "default.xex") {
+          final_path = e.path();
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        continue;
+      }
+    }
+    scan.push_back(final_path);
+  }
+  if (scan.empty()) {
+    return;
+  }
+  // Same full scan as manual Add/Scan (metadata + icon search + artwork).
+  app_context_.CallInUIThread([this, scan]() {
+#ifdef XENIA_HAS_WX_UI
+    auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+    if (!wx_window->IsLibraryAttached()) {
+      return;
+    }
+    wx_window->ImportLibraryPaths(scan);
+#endif
+  });
+}
+
 void EmulatorWindow::InstallContent() {
   std::vector<std::filesystem::path> paths;
 
@@ -1492,11 +1566,22 @@ void EmulatorWindow::InstallContent() {
     for (auto& entry : *content_installation_status) {
       emulator_->InstallContentPackage(entry.path_, entry);
     }
+    AddInstalledContentToLibrary(content_installation_status, false);
   });
   installationThread.detach();
 
-  new ContentInstallDialog(imgui_drawer_.get(), *this,
-                           content_installation_status);
+#ifdef XENIA_HAS_WX_UI
+  // The ImGui dialog renders behind the library view when attached.
+  if (auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+      wx_window->IsLibraryAttached()) {
+    wx_ui::ShowContentInstallDialog(wx_window, content_installation_status,
+                                    emulator_->content_root(), false);
+  } else
+#endif
+  {
+    new ContentInstallDialog(imgui_drawer_.get(), *this,
+                             content_installation_status);
+  }
 }
 
 void EmulatorWindow::ExtractContent(const std::filesystem::path file) {
@@ -1554,11 +1639,22 @@ void EmulatorWindow::ExtractContent(const std::filesystem::path file) {
     for (auto& entry : *content_installation_status) {
       emulator_->ExtractContentPackage(entry.path_, entry);
     }
+    AddInstalledContentToLibrary(content_installation_status, true);
   });
   installationThread.detach();
 
-  new ContentInstallDialog(imgui_drawer_.get(), *this,
-                           content_installation_status);
+#ifdef XENIA_HAS_WX_UI
+  // The ImGui dialog renders behind the library view when attached.
+  if (auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+      wx_window->IsLibraryAttached()) {
+    wx_ui::ShowContentInstallDialog(wx_window, content_installation_status,
+                                    emulator_->content_root(), true);
+  } else
+#endif
+  {
+    new ContentInstallDialog(imgui_drawer_.get(), *this,
+                             content_installation_status);
+  }
 }
 
 void EmulatorWindow::ExtractZarchive() {

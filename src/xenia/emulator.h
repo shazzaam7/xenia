@@ -290,6 +290,9 @@ class Emulator {
     std::string installation_error_message_{};
 
     std::unique_ptr<ui::ImmediateTexture> icon_;
+    // Raw icon bytes for backends that can't use ImmediateTexture (wxWidgets
+    // progress dialog decodes these itself).
+    std::vector<uint8_t> icon_bytes_;
   };
 
   // Migrates data from content to content/xuid with respect to common data.
