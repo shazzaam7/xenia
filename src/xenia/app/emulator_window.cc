@@ -50,6 +50,10 @@
 #include "xenia/ui/ui_event.h"
 #include "xenia/ui/virtual_key.h"
 
+#ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_window.h"
+#endif
+
 #include "version.h"
 
 DECLARE_bool(debug);
@@ -762,6 +766,15 @@ bool EmulatorWindow::Initialize() {
                          std::bind(&EmulatorWindow::FileOpen, this)));
     file_menu->AddChild(std::move(recent_menu));
     file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+#ifdef XENIA_HAS_WX_UI
+    file_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "Add Game...",
+                         std::bind(&EmulatorWindow::LibraryAddGame, this)));
+    file_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "Scan Folder...",
+                         std::bind(&EmulatorWindow::LibraryScanFolder, this)));
+    file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+#endif
     zar_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "Create",
                          std::bind(&EmulatorWindow::CreateZarchive, this)));
@@ -769,12 +782,14 @@ bool EmulatorWindow::Initialize() {
         MenuItem::Create(MenuItem::Type::kString, "Extract",
                          std::bind(&EmulatorWindow::ExtractZarchive, this)));
     file_menu->AddChild(std::move(zar_menu));
-#ifdef DEBUG
     file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-    file_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Close",
-                         std::bind(&EmulatorWindow::FileClose, this)));
-#endif  // #ifdef DEBUG
+    {
+      auto stop = MenuItem::Create(MenuItem::Type::kString, "Stop",
+                                   std::bind(&EmulatorWindow::FileClose, this));
+      stop->SetEnabled(false);
+      stop_item_ = stop.get();
+      file_menu->AddChild(std::move(stop));
+    }
     file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     file_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Show content directory...",
@@ -946,6 +961,15 @@ bool EmulatorWindow::Initialize() {
     XELOGE("Failed to open the platform window");
     return false;
   }
+
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())
+      ->AttachLibrary(
+          [this](size_t index, int disc, const std::filesystem::path& path) {
+            LibraryBoot(index, disc, path);
+          },
+          emulator_->storage_root());
+#endif
 
   Profiler::SetUserIO(kZOrderProfiler, window_.get(), nullptr, nullptr);
 
@@ -1284,7 +1308,61 @@ void EmulatorWindow::FileOpen() {
   }
 }
 
-void EmulatorWindow::FileClose() { emulator_->TerminateTitle(); }
+void EmulatorWindow::FileClose() { StopTitle(); }
+
+void EmulatorWindow::StopTitle() {
+  if (!emulator_->is_title_open()) {
+    return;
+  }
+  emulator_->TerminateTitle();
+  ShutdownGraphicsSystemPresenterPainting();
+  window_->SetIcon(nullptr, 0);
+  ClearDialogs();
+  UpdateTitle();
+  UpdateStopEnabled();
+  ShowLibrary();
+}
+
+void EmulatorWindow::LibraryBoot(size_t index, int disc_number,
+                                 const std::filesystem::path& path) {
+  has_library_boot_ = true;
+  library_boot_index_ = index;
+  library_boot_disc_ = disc_number;
+  if (XFAILED(RunTitle(path))) {
+    has_library_boot_ = false;
+  }
+}
+
+void EmulatorWindow::LibraryAddGame() {
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())->OnAddGame();
+#endif
+}
+
+void EmulatorWindow::LibraryScanFolder() {
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())->OnScanFolder();
+#endif
+}
+
+void EmulatorWindow::UpdateStopEnabled() {
+  if (stop_item_) {
+    stop_item_->SetEnabled(emulator_->is_title_open());
+    window_->CompleteMainMenuItemsUpdate();
+  }
+}
+
+void EmulatorWindow::ShowLibrary() {
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())->ShowLibrary();
+#endif
+}
+
+void EmulatorWindow::ShowGame() {
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())->ShowGame();
+#endif
+}
 
 void EmulatorWindow::InstallContent() {
   std::vector<std::filesystem::path> paths;
@@ -2294,10 +2372,17 @@ xe::X_STATUS EmulatorWindow::RunTitle(
   }
 
   if (emulator_->is_title_open()) {
-    // Terminate the current title and start a new title.
-    // if (emulator_->TerminateTitle() == X_STATUS_SUCCESS) {
-    //   return RunTitle(path);
-    // }
+    // No auto-terminate (crash risk): bring the running title forward and
+    // tell the user to close it first instead of failing silently.
+    XELOGE("A title is already running. Close it before launching another.");
+#ifdef XENIA_HAS_WX_UI
+    ShowGame();
+#endif
+    ClearDialogs();
+
+    xe::ui::ImGuiDialog::ShowMessageBox(
+        imgui_drawer_.get(), "Title Already Running!",
+        "A title is already running.\n\nClose it first, then launch another.");
 
     return X_STATUS_UNSUCCESSFUL;
   }
@@ -2341,6 +2426,16 @@ xe::X_STATUS EmulatorWindow::RunTitle(
             "xam.xex");
 
     xam->loader_data().host_path = xe::path_to_utf8(abs_path);
+
+#ifdef XENIA_HAS_WX_UI
+    auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+    if (has_library_boot_) {
+      wx_window->NoteGameBooted(library_boot_index_, library_boot_disc_);
+      has_library_boot_ = false;
+    }
+    wx_window->ShowGame();
+#endif
+    UpdateStopEnabled();
   }
 
   return result;

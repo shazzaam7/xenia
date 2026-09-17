@@ -374,6 +374,13 @@ X_STATUS Emulator::TerminateTitle() {
   return X_STATUS_SUCCESS;
 }
 
+void Emulator::OnGuestTitleTerminated() {
+  title_id_ = std::nullopt;
+  title_name_ = "";
+  title_version_ = "";
+  on_terminate();
+}
+
 const std::unique_ptr<vfs::Device> Emulator::CreateVfsDevice(
     const std::filesystem::path& path, const std::string_view mount_path) {
   // Must check if the type has changed e.g. XamSwapDisc

@@ -1,11 +1,14 @@
 #ifndef XENIA_APP_WX_WINDOW_H_
 #define XENIA_APP_WX_WINDOW_H_
 
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "xenia/app/wx/wx_library_view.h"
 #include "xenia/base/platform.h"
 #include "xenia/ui/file_picker.h"
 #include "xenia/ui/menu_item.h"
@@ -21,6 +24,7 @@
 #include <wx/event.h>
 #include <wx/gdicmn.h>
 #include <wx/menu.h>
+#include <wx/simplebook.h>
 
 namespace xe {
 namespace app {
@@ -54,7 +58,7 @@ class WxMenuItem : public ui::MenuItem {
 // wxWidgets backend for xe::ui::Window, mirroring Win32Window/GTKWindow.
 // Platform-specific behavior lives in wx_window_win.cc / wx_window_linux.cc;
 // this file and wx_window.cc hold the shared plumbing.
-class WxWindow : public ui::Window {
+class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   using super = ui::Window;
 
  public:
@@ -69,6 +73,29 @@ class WxWindow : public ui::Window {
   WxViewPanel* view() const { return view_; }
 
   uint32_t GetMediumDpi() const override;
+
+  // Game library. AttachLibrary builds a book (library page + game view page)
+  // once the frame exists; all other calls are no-ops until attached.
+  using LibraryBootCallback = std::function<void(
+      size_t index, int disc_number, const std::filesystem::path& path)>;
+  void AttachLibrary(LibraryBootCallback on_boot,
+                     const std::filesystem::path& storage_root);
+  void ShowLibrary();
+  void ShowGame();
+  bool IsLibraryAttached() const { return library_view_ != nullptr; }
+  size_t LibraryEntryCount() const { return library_entries_.size(); }
+  const GameEntry* LibraryEntry(size_t index) const;
+  void NoteGameBooted(size_t index, int disc_number);
+  void ImportLibraryPaths(const std::vector<std::filesystem::path>& paths);
+  void ScanLibraryFolder(const std::filesystem::path& dir);
+  void RemoveLibraryEntry(size_t index);
+
+  // WxLibraryView::Delegate (all on the UI thread).
+  void OnBootGame(size_t index, int disc_number) override;
+  void OnRemoveGame(size_t index) override;
+  void OnShowInFolder(size_t index) override;
+  void OnAddGame() override;
+  void OnScanFolder() override;
 
  protected:
   bool OpenImpl() override;
@@ -96,6 +123,8 @@ class WxWindow : public ui::Window {
   friend class WxViewPanel;
   friend class WxHostFrame;
   friend class WxDropTarget;
+
+  void SaveLibraryEntries();
 
   // Shared close path for the frame close event.
   void CloseWindowNow();
@@ -157,6 +186,13 @@ class WxWindow : public ui::Window {
 
   wxPoint cursor_auto_hide_last_screen_pos_ = wxDefaultPosition;
   bool cursor_currently_auto_hidden_ = false;
+
+  // Game library (only when AttachLibrary ran).
+  wxSimplebook* book_ = nullptr;
+  WxLibraryView* library_view_ = nullptr;
+  LibraryBootCallback library_on_boot_;
+  std::filesystem::path library_storage_root_;
+  std::vector<GameEntry> library_entries_;
 };
 
 class WxFilePicker : public ui::FilePicker {
