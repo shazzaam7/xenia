@@ -23,10 +23,14 @@
 #include <wx/filedlg.h>
 #include <wx/frame.h>
 #include <wx/menu.h>
+#include <wx/msgdlg.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
+
+#include "xenia/app/wx/wx_game_scan.h"
+#include "xenia/app/wx/wx_library_store.h"
 
 #if defined(__WXMSW__)
 #include <Dbt.h>
@@ -280,6 +284,10 @@ void WxWindow::CloseWindowNow() {
   }
   frame_ = nullptr;
   view_ = nullptr;
+  // Owned by the frame (directly or through the library book); Destroy takes
+  // them down together.
+  book_ = nullptr;
+  library_view_ = nullptr;
   if (frame) {
     frame->DetachOwner();
     frame->Destroy();
@@ -664,6 +672,169 @@ void WxWindowedAppContext::PlatformQuitFromUIThread() {
   if (wxTheApp && wxApp::IsMainLoopRunning()) {
     wxTheApp->ExitMainLoop();
   }
+}
+
+void WxWindow::AttachLibrary(LibraryBootCallback on_boot,
+                             const std::filesystem::path& storage_root) {
+  if (library_view_ || !frame_ || !view_) {
+    return;
+  }
+  library_on_boot_ = std::move(on_boot);
+  library_storage_root_ = storage_root;
+  LoadLibrary(library_storage_root_, library_entries_);
+
+  book_ = new wxSimplebook(frame_, wxID_ANY);
+  frame_->GetSizer()->Detach(view_);
+  view_->Reparent(book_);
+  book_->AddPage(view_, wxString(), false);
+  library_view_ = new WxLibraryView(book_, this, library_storage_root_);
+  book_->AddPage(library_view_, wxString(), true);
+  library_view_->DragAcceptFiles(true);
+  library_view_->SetDropTarget(new WxDropTarget(this));
+  frame_->GetSizer()->Add(book_, 1, wxEXPAND);
+  frame_->Layout();
+  library_view_->SetEntries(library_entries_);
+  ShowLibrary();
+}
+
+void WxWindow::ShowLibrary() {
+  if (!book_ || !library_view_) {
+    return;
+  }
+  book_->ChangeSelection(1);
+  frame_->Layout();
+  library_view_->SetFocus();
+}
+
+void WxWindow::ShowGame() {
+  if (!book_ || !view_) {
+    return;
+  }
+  book_->ChangeSelection(0);
+  frame_->Layout();
+  view_->SetFocus();
+}
+
+const GameEntry* WxWindow::LibraryEntry(size_t index) const {
+  return index < library_entries_.size() ? &library_entries_[index] : nullptr;
+}
+
+void WxWindow::SaveLibraryEntries() {
+  if (!library_storage_root_.empty()) {
+    SaveLibrary(library_storage_root_, library_entries_);
+  }
+}
+
+void WxWindow::NoteGameBooted(size_t index, int disc_number) {
+  if (index >= library_entries_.size()) {
+    return;
+  }
+  auto& entry = library_entries_[index];
+  entry.last_play = std::time(nullptr);
+  entry.last_played_disc = disc_number;
+  SaveLibraryEntries();
+  if (library_view_) {
+    library_view_->RefreshEntry(index);
+  }
+}
+
+void WxWindow::ImportLibraryPaths(
+    const std::vector<std::filesystem::path>& paths) {
+  if (!library_view_ || paths.empty()) {
+    return;
+  }
+  if (ImportGamePaths(library_view_, library_storage_root_, library_entries_,
+                      paths)) {
+    SaveLibraryEntries();
+    library_view_->SetEntries(library_entries_);
+  }
+}
+
+void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
+  ImportLibraryPaths(DiscoverGameFiles(dir));
+}
+
+void WxWindow::RemoveLibraryEntry(size_t index) {
+  if (index >= library_entries_.size() || !library_view_) {
+    return;
+  }
+  const auto& entry = library_entries_[index];
+  if (wxMessageBox(WxLabel("Remove \"" + entry.name +
+                           "\" from the library?\n"
+                           "Game files on disk are kept."),
+                   "Remove game", wxYES_NO | wxICON_QUESTION,
+                   library_view_) != wxYES) {
+    return;
+  }
+  std::error_code ec = {};
+  std::filesystem::remove_all(ArtworkDir(library_storage_root_, entry.title_id),
+                              ec);
+  library_entries_.erase(library_entries_.begin() + index);
+  SaveLibraryEntries();
+  library_view_->SetEntries(library_entries_);
+}
+
+void WxWindow::OnBootGame(size_t index, int disc_number) {
+  if (!library_on_boot_ || index >= library_entries_.size() ||
+      disc_number <= 0) {
+    return;
+  }
+  const auto* path = library_entries_[index].DiscPath(disc_number);
+  if (path && !path->empty()) {
+    library_on_boot_(index, disc_number, *path);
+  }
+}
+
+void WxWindow::OnRemoveGame(size_t index) { RemoveLibraryEntry(index); }
+
+void WxWindow::OnShowInFolder(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->discs.empty()) {
+    return;
+  }
+#if defined(__WXMSW__)
+  wxExecute("explorer /select,\"" +
+            WxLabel(xe::path_to_utf8(entry->discs[0].path)) + "\"");
+#else
+  std::filesystem::path dir = entry->discs[0].path;
+  std::error_code ec = {};
+  if (!std::filesystem::is_directory(dir, ec)) {
+    dir = dir.parent_path();
+  }
+  wxExecute("xdg-open \"" + WxLabel(xe::path_to_utf8(dir)) + "\"");
+#endif
+}
+
+void WxWindow::OnAddGame() {
+  if (!library_view_) {
+    return;
+  }
+  wxFileDialog dialog(
+      library_view_, "Add Game", wxString(), wxString(),
+      "Xbox 360 games (*.xex;*.iso;*.xiso;*.zar)|*.xex;*.iso;*.xiso;*.zar|"
+      "All files (*.*)|*.*",
+      wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
+  if (dialog.ShowModal() != wxID_OK) {
+    return;
+  }
+  wxArrayString wx_paths;
+  dialog.GetPaths(wx_paths);
+  std::vector<std::filesystem::path> paths;
+  for (const auto& p : wx_paths) {
+    paths.push_back(WxToPath(p));
+  }
+  ImportLibraryPaths(paths);
+}
+
+void WxWindow::OnScanFolder() {
+  if (!library_view_) {
+    return;
+  }
+  wxDirDialog dialog(library_view_, "Scan Folder for Games");
+  if (dialog.ShowModal() != wxID_OK) {
+    return;
+  }
+  ScanLibraryFolder(WxToPath(dialog.GetPath()));
 }
 
 }  // namespace wx_ui

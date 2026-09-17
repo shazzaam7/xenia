@@ -764,7 +764,10 @@ void EmulatorApp::EmulatorThread() {
       discord::DiscordPresence::PlayingTitle(
           game_title.empty() ? "Unknown Title" : std::string(game_title));
     }
-    app_context().CallInUIThread([this]() { emulator_window_->UpdateTitle(); });
+    app_context().CallInUIThread([this]() {
+      emulator_window_->UpdateTitle();
+      emulator_window_->ShowGame();
+    });
     emulator_thread_event_->Set();
   });
 
@@ -779,10 +782,11 @@ void EmulatorApp::EmulatorThread() {
     app_context().CallInUIThread([this]() { emulator_window_->UpdateTitle(); });
   });
 
-  emulator_->on_terminate.AddListener([]() {
+  emulator_->on_terminate.AddListener([this]() {
     if (cvars::discord) {
       discord::DiscordPresence::NotPlaying();
     }
+    app_context().CallInUIThread([this]() { emulator_window_->ShowLibrary(); });
   });
 
   // Enable emulator input now that the emulator is properly loaded.

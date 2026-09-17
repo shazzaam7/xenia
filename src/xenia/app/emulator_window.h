@@ -86,6 +86,8 @@ class EmulatorWindow {
 
   xe::X_STATUS RunTitle(const std::filesystem::path& path_to_file);
   void UpdateTitle();
+  void ShowLibrary();
+  void ShowGame();
   void SetFullscreen(bool fullscreen);
   void ToggleFullscreen();
   void SetInitializingShaderStorage(bool initializing);
@@ -268,6 +270,12 @@ class EmulatorWindow {
   void OnMouseUp(const ui::MouseEvent& e);
   void FileOpen();
   void FileClose();
+  void StopTitle();
+  void LibraryBoot(size_t index, int disc_number,
+                   const std::filesystem::path& path);
+  void LibraryAddGame();
+  void LibraryScanFolder();
+  void UpdateStopEnabled();
   void InstallContent();
   void ExtractZarchive();
   void CreateZarchive();
@@ -330,6 +338,12 @@ class EmulatorWindow {
   std::unique_ptr<XMPConfigDialog> xmp_config_dialog_;
 
   std::vector<RecentTitleEntry> recently_launched_titles_;
+
+  // Game library state (wx backend only; the window owns the entries).
+  ui::MenuItem* stop_item_ = nullptr;
+  bool has_library_boot_ = false;
+  size_t library_boot_index_ = 0;
+  int library_boot_disc_ = 1;
 };
 
 }  // namespace app
