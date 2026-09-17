@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -194,6 +195,19 @@ class Emulator {
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
 
+  // Tears down all subsystems. Called by the destructor and by ResetTitle.
+  void Shutdown();
+
+  // Mounts scratch, cache, and devkit drives based on cvars.
+  void MountStandardDrives();
+
+  // Stops the current title and returns the kernel to a fresh, idle state
+  // (no title loaded). Must be called from a non-guest, non-UI thread.
+  // Returns success, or the Setup error if the emulator could not be
+  // re-initialized (in that case no title is open and subsystems are torn
+  // down - do not launch).
+  X_STATUS ResetTitle();
+
   // Clears title state after a guest-initiated exit (XamLoaderTerminateTitle
   // and friends), where the calling guest thread dies inside
   // KernelState::TerminateTitle and never returns. Must run on the UI thread;
@@ -325,6 +339,21 @@ class Emulator {
   xe::Delegate<> on_terminate;
   xe::Delegate<> on_exit;
 
+  // Called when the game requests an exit to dashboard from a guest thread.
+  // Carries the captured loader data for an optional title-to-title relaunch
+  // (empty host_path = plain dashboard exit, return to library).
+  // Returns true if the exit is handled in-process (the calling guest thread
+  // will be terminated by ResetTitle and must not return to guest code).
+  using GuestTitleExitCallback = std::function<bool(
+      std::string host_path, std::string launch_path, uint32_t launch_flags,
+      std::vector<uint8_t> launch_data)>;
+  GuestTitleExitCallback on_guest_title_exit() const {
+    return on_guest_title_exit_;
+  }
+  void set_on_guest_title_exit(GuestTitleExitCallback callback) {
+    on_guest_title_exit_ = std::move(callback);
+  }
+
  private:
   enum : uint64_t { EmulatorFlagDisclaimerAcknowledged = 1ULL << 0 };
   static uint64_t GetPersistentEmulatorFlags();
@@ -382,7 +411,20 @@ class Emulator {
 
   bool paused_;
   bool restoring_;
+  bool relaunching_ = false;
+  // Held across CompleteLaunch so title teardown waits for it to finish.
+  std::mutex launch_mutex_;
   threading::Fence restore_fence_;  // Fired on restore finish.
+  GuestTitleExitCallback on_guest_title_exit_;
+
+  // Persisted across Shutdown/Setup for ResetTitle.
+  bool require_cpu_backend_ = false;
+  std::function<std::unique_ptr<apu::AudioSystem>(cpu::Processor*)>
+      audio_system_factory_;
+  std::function<std::unique_ptr<gpu::GraphicsSystem>()>
+      graphics_system_factory_;
+  std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
+      input_driver_factory_;
 };
 
 }  // namespace xe
