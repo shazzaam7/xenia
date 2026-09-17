@@ -20,6 +20,8 @@
 #pragma clang diagnostic pop
 #endif
 
+#include <thread>
+
 #include "xenia/app/console_settings_dialog.h"
 #include "xenia/app/content_list_dialog.h"
 #include "xenia/base/assert.h"
@@ -200,6 +202,16 @@ EmulatorWindow::EmulatorWindow(Emulator* emulator,
                 ")";
 
   LoadRecentlyLaunchedTitles();
+
+  // Guest-initiated exits (XamLoaderTerminateTitle and friends) route here so
+  // the title is stopped via ResetTitle instead of the legacy suicide path.
+  emulator_->set_on_guest_title_exit(
+      [this](std::string host_path, std::string launch_path,
+             uint32_t launch_flags, std::vector<uint8_t> launch_data) {
+        return StopTitleFromGuestThread(std::move(host_path),
+                                        std::move(launch_path), launch_flags,
+                                        std::move(launch_data));
+      });
 }
 
 std::unique_ptr<EmulatorWindow> EmulatorWindow::Create(
@@ -233,6 +245,9 @@ void EmulatorWindow::SetupGraphicsSystemPresenterPainting() {
 
   ui::Presenter* presenter = GetGraphicsSystemPresenter();
   if (!presenter) {
+    XELOGE(
+        "SetupGraphicsSystemPresenterPainting: no presenter - titles will "
+        "launch without video. Graphics system was likely not set up.");
     return;
   }
 
@@ -1314,13 +1329,91 @@ void EmulatorWindow::StopTitle() {
   if (!emulator_->is_title_open()) {
     return;
   }
-  emulator_->TerminateTitle();
+  // Detach the presenter first, on the UI thread: the paint loop drives the
+  // GPU completion timelines, so it must not touch GPU objects while the
+  // background thread below tears them down.
   ShutdownGraphicsSystemPresenterPainting();
   window_->SetIcon(nullptr, 0);
   ClearDialogs();
-  UpdateTitle();
-  UpdateStopEnabled();
-  ShowLibrary();
+  // ResetTitle terminates guest threads and tears down subsystems, so it must
+  // run off the UI thread.
+  std::thread([this]() {
+    emulator_->ResetTitle();
+    app_context_.CallInUIThread([this]() {
+      UpdateTitle();
+      UpdateStopEnabled();
+      ShowLibrary();
+    });
+  }).detach();
+}
+
+bool EmulatorWindow::StopTitleFromGuestThread(
+    std::string host_path, std::string launch_path, uint32_t launch_flags,
+    std::vector<uint8_t> launch_data) {
+  if (!emulator_->is_title_open()) {
+    return false;
+  }
+  // Runs on a guest thread: hop presentation teardown through the UI thread
+  // first so the paint loop can't touch GPU objects during teardown.
+  app_context_.CallInUIThreadSynchronous([this]() {
+    ShutdownGraphicsSystemPresenterPainting();
+    window_->SetIcon(nullptr, 0);
+    ClearDialogs();
+  });
+  std::thread([this, host_path = std::move(host_path),
+               launch_path = std::move(launch_path), launch_flags,
+               launch_data = std::move(launch_data)]() mutable {
+    if (XFAILED(emulator_->ResetTitle())) {
+      app_context_.CallInUIThread([this]() {
+        xe::ui::ImGuiDialog::ShowMessageBox(
+            imgui_drawer_.get(), "Title Stop Failed!",
+            "Failed to stop the running title cleanly.\n\nCheck xenia.log "
+            "for technical details.");
+        UpdateTitle();
+        UpdateStopEnabled();
+        ShowLibrary();
+      });
+      return;
+    }
+    if (host_path.empty()) {
+      // Plain dashboard exit: back to the library.
+      app_context_.CallInUIThread([this]() {
+        UpdateTitle();
+        UpdateStopEnabled();
+        ShowLibrary();
+      });
+      return;
+    }
+    // Title-to-title relaunch: restore the captured loader data into the
+    // fresh kernel, then launch exactly like RunTitle does.
+    auto xam =
+        emulator_->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
+            "xam.xex");
+    auto& loader_data = xam->loader_data();
+    loader_data.host_path = host_path;
+    loader_data.launch_path = launch_path;
+    loader_data.launch_flags = launch_flags;
+    loader_data.launch_data = std::move(launch_data);
+    app_context_.CallInUIThreadSynchronous(
+        [this]() { SetupGraphicsSystemPresenterPainting(); });
+    std::filesystem::path target = xe::to_path(host_path);
+    auto result = emulator_->LaunchPath(target);
+    if (XSUCCEEDED(result)) {
+      // Consumed in-process: drop the persisted request so a later restart
+      // doesn't replay it. Kept on failure so the next boot can retry.
+      auto xam_after =
+          emulator_->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
+              "xam.xex");
+      if (xam_after) {
+        xam_after->ClearSavedLoaderData();
+      }
+    }
+    auto abs_path = std::filesystem::absolute(target);
+    app_context_.CallInUIThread([this, result, target, abs_path]() mutable {
+      FinishTitleLaunch(target, abs_path, result);
+    });
+  }).detach();
+  return true;
 }
 
 void EmulatorWindow::LibraryBoot(size_t index, int disc_number,
@@ -2342,70 +2435,9 @@ std::string EmulatorWindow::CanonicalizeFileExtension(
   return xe::utf8::lower_ascii(xe::path_to_utf8(path.extension()));
 }
 
-xe::X_STATUS EmulatorWindow::RunTitle(
-    const std::filesystem::path& path_to_file) {
-  std::error_code ec = {};
-  bool titleExists = std::filesystem::exists(path_to_file, ec);
-
-  if (path_to_file.empty() || !titleExists) {
-    std::string log_msg =
-        fmt::format("Failed to launch title path is {}.",
-                    path_to_file.empty() ? "empty" : "invalid");
-
-    if (!path_to_file.empty() && !titleExists) {
-      log_msg.append(fmt::format("\nProvided Path: {}", path_to_file));
-    }
-
-    if (ec) {
-      log_msg.append(fmt::format("\nExtended message info: {} ({:08X})",
-                                 ec.message(), ec.value()));
-    }
-
-    XELOGE("{}", log_msg);
-
-    ClearDialogs();
-
-    xe::ui::ImGuiDialog::ShowMessageBox(imgui_drawer_.get(),
-                                        "Title Launch Failed!", log_msg);
-
-    return X_STATUS_NO_SUCH_FILE;
-  }
-
-  if (emulator_->is_title_open()) {
-    // No auto-terminate (crash risk): bring the running title forward and
-    // tell the user to close it first instead of failing silently.
-    XELOGE("A title is already running. Close it before launching another.");
-#ifdef XENIA_HAS_WX_UI
-    ShowGame();
-#endif
-    ClearDialogs();
-
-    xe::ui::ImGuiDialog::ShowMessageBox(
-        imgui_drawer_.get(), "Title Already Running!",
-        "A title is already running.\n\nClose it first, then launch another.");
-
-    return X_STATUS_UNSUCCESSFUL;
-  }
-
-  // Prevent crashing the emulator by not loading a game if a game is already
-  // loaded.
-  auto abs_path = std::filesystem::absolute(path_to_file);
-
-  auto extension = CanonicalizeFileExtension(abs_path);
-
-  if (extension == ".7z" || extension == ".zip" || extension == ".rar" ||
-      extension == ".tar" || extension == ".gz") {
-    xe::ShowSimpleMessageBox(
-        xe::SimpleMessageBoxType::Error,
-        fmt::format(
-            "Unsupported format!\n"
-            "Xenia does not support running software in an archived format."));
-
-    return X_STATUS_UNSUCCESSFUL;
-  }
-
-  auto result = emulator_->LaunchPath(abs_path);
-
+void EmulatorWindow::FinishTitleLaunch(
+    const std::filesystem::path& path_to_file,
+    const std::filesystem::path& abs_path, xe::X_STATUS result) {
   disable_hotkeys_ = false;
 
   ClearDialogs();
@@ -2437,6 +2469,97 @@ xe::X_STATUS EmulatorWindow::RunTitle(
 #endif
     UpdateStopEnabled();
   }
+}
+
+xe::X_STATUS EmulatorWindow::RunTitle(
+    const std::filesystem::path& path_to_file) {
+  std::error_code ec = {};
+  bool titleExists = std::filesystem::exists(path_to_file, ec);
+
+  if (path_to_file.empty() || !titleExists) {
+    std::string log_msg =
+        fmt::format("Failed to launch title path is {}.",
+                    path_to_file.empty() ? "empty" : "invalid");
+
+    if (!path_to_file.empty() && !titleExists) {
+      log_msg.append(fmt::format("\nProvided Path: {}", path_to_file));
+    }
+
+    if (ec) {
+      log_msg.append(fmt::format("\nExtended message info: {} ({:08X})",
+                                 ec.message(), ec.value()));
+    }
+
+    XELOGE("{}", log_msg);
+
+    ClearDialogs();
+
+    xe::ui::ImGuiDialog::ShowMessageBox(imgui_drawer_.get(),
+                                        "Title Launch Failed!", log_msg);
+
+    return X_STATUS_NO_SUCH_FILE;
+  }
+
+  // Resolve the absolute path before branching: a title may already be
+  // running (handled below via reset-and-relaunch).
+  auto abs_path = std::filesystem::absolute(path_to_file);
+
+  auto extension = CanonicalizeFileExtension(abs_path);
+
+  if (extension == ".7z" || extension == ".zip" || extension == ".rar" ||
+      extension == ".tar" || extension == ".gz") {
+    xe::ShowSimpleMessageBox(
+        xe::SimpleMessageBoxType::Error,
+        fmt::format(
+            "Unsupported format!\n"
+            "Xenia does not support running software in an archived format."));
+
+    return X_STATUS_UNSUCCESSFUL;
+  }
+
+  if (emulator_->is_title_open()) {
+    // Detach the presenter first, on the UI thread: the paint loop drives the
+    // GPU completion timelines, so it must not touch GPU objects while the
+    // background thread below tears them down.
+    ShutdownGraphicsSystemPresenterPainting();
+    // Detached non-guest, non-UI thread: ResetTitle terminates guest threads
+    // and tears down subsystems, which must not run on the UI thread.
+    // The presenter is re-attached before launching so the new title's first
+    // frames have a surface to present to (otherwise the window keeps showing
+    // the previous title's last frame).
+    Emulator* emulator = emulator_;
+    std::thread([this, emulator, abs_path, path_to_file]() mutable {
+      if (XFAILED(emulator->ResetTitle())) {
+        app_context_.CallInUIThread([this]() {
+          xe::ui::ImGuiDialog::ShowMessageBox(
+              imgui_drawer_.get(), "Title Stop Failed!",
+              "Failed to stop the running title cleanly.\n\nCheck xenia.log "
+              "for technical details.");
+          UpdateTitle();
+          UpdateStopEnabled();
+          ShowLibrary();
+        });
+        return;
+      }
+      app_context_.CallInUIThreadSynchronous(
+          [this]() { SetupGraphicsSystemPresenterPainting(); });
+      auto result = emulator->LaunchPath(abs_path);
+      app_context_.CallInUIThread([this, result, abs_path, path_to_file]() {
+        FinishTitleLaunch(path_to_file, abs_path, result);
+      });
+    }).detach();
+    return X_STATUS_SUCCESS;
+  }
+
+  // (Re-)attach the presenter before launching: after a Stop the painting was
+  // shut down and the fresh graphics system has no surface yet. Without this
+  // the game boots with no presenter and the window keeps showing the
+  // previous title's last frame. Harmless on the very first launch.
+  SetupGraphicsSystemPresenterPainting();
+
+  auto result = emulator_->LaunchPath(abs_path);
+
+  FinishTitleLaunch(path_to_file, abs_path, result);
 
   return result;
 }

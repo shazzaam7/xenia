@@ -9,6 +9,9 @@
 
 #include "xenia/kernel/xam/xam_module.h"
 
+#include <filesystem>
+#include <system_error>
+
 #include "xenia/base/math.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xam/xam_private.h"
@@ -145,6 +148,11 @@ void XamModule::SaveLoaderData() {
   fwrite(loader_data_.launch_data.data(), launch_data_size, 1, file);
 
   fclose(file);
+}
+
+void XamModule::ClearSavedLoaderData() {
+  std::error_code ec;
+  std::filesystem::remove(kXamModuleLoaderDataFileName, ec);
 }
 
 }  // namespace xam
