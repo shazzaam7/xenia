@@ -271,6 +271,13 @@ class EmulatorWindow {
   void FileOpen();
   void FileClose();
   void StopTitle();
+  // Guest-thread entry for game-requested exits: detaches presentation on
+  // the UI thread, resets the title on a detached thread (relaunching into
+  // host_path when non-empty), and returns true when handled in-process.
+  // The calling guest thread is terminated by ResetTitle and must park.
+  bool StopTitleFromGuestThread(std::string host_path, std::string launch_path,
+                                uint32_t launch_flags,
+                                std::vector<uint8_t> launch_data);
   void LibraryBoot(size_t index, int disc_number,
                    const std::filesystem::path& path);
   void LibraryAddGame();
@@ -303,6 +310,12 @@ class EmulatorWindow {
 
   static std::string CanonicalizeFileExtension(
       const std::filesystem::path& path);
+
+  // Shared post-launch UI handling for all RunTitle paths. Must run on the
+  // UI thread.
+  void FinishTitleLaunch(const std::filesystem::path& path_to_file,
+                         const std::filesystem::path& abs_path,
+                         xe::X_STATUS result);
 
   void RunPreviouslyPlayedTitle();
   void FillRecentlyLaunchedTitlesMenu(xe::ui::MenuItem* recent_menu);

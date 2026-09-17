@@ -14,6 +14,7 @@
 #include <condition_variable>
 #include <functional>
 #include <list>
+#include <string>
 #include <vector>
 
 #include "xenia/base/bit_map.h"
@@ -262,6 +263,17 @@ class KernelState {
   // Terminates a title: Unloads all modules, and kills all guest threads.
   // This DOES NOT RETURN if called from a guest thread!
   void TerminateTitle();
+
+  // Handles a guest request to exit to the dashboard, with optional
+  // title-to-title relaunch data. Returns true if the exit was routed to the
+  // app layer for in-process handling (the calling guest thread is parked and
+  // will be terminated by ResetTitle - it must not return to guest code).
+  // Returns false if unhandled, in which case the caller should fall back to
+  // TerminateTitle.
+  bool ExitToDashboard(std::string host_path, std::string launch_path,
+                       uint32_t launch_flags, std::vector<uint8_t> launch_data);
+
+  void ShutdownDispatchThread();
 
   void RegisterThread(XThread* thread);
   void UnregisterThread(XThread* thread);
