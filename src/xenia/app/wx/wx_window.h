@@ -79,7 +79,8 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   using LibraryBootCallback = std::function<void(
       size_t index, int disc_number, const std::filesystem::path& path)>;
   void AttachLibrary(LibraryBootCallback on_boot,
-                     const std::filesystem::path& storage_root);
+                     const std::filesystem::path& storage_root,
+                     const std::filesystem::path& content_root);
   void ShowLibrary();
   void ShowGame();
   bool IsLibraryAttached() const { return library_view_ != nullptr; }
@@ -88,6 +89,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void NoteGameBooted(size_t index, int disc_number);
   void ImportLibraryPaths(const std::vector<std::filesystem::path>& paths);
   void ScanLibraryFolder(const std::filesystem::path& dir);
+  // Imports installed titles found under the content tree. Runs on the UI
+  // thread, usually once from AttachLibrary.
+  void ScanInstalledGames();
   void RemoveLibraryEntry(size_t index);
 
   // WxLibraryView::Delegate (all on the UI thread).
@@ -192,6 +196,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   WxLibraryView* library_view_ = nullptr;
   LibraryBootCallback library_on_boot_;
   std::filesystem::path library_storage_root_;
+  std::filesystem::path library_content_root_;
   std::vector<GameEntry> library_entries_;
 };
 

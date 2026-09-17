@@ -1479,6 +1479,51 @@ std::vector<std::filesystem::path> DiscoverGameFiles(
   return found;
 }
 
+std::vector<std::filesystem::path> DiscoverInstalledGames(
+    const std::filesystem::path& content_root) {
+  std::vector<std::filesystem::path> found;
+  std::error_code ec = {};
+  const auto common_dir = content_root / "0000000000000000";
+  if (!std::filesystem::is_directory(common_dir, ec)) {
+    return found;
+  }
+  for (const auto& title_entry :
+       std::filesystem::directory_iterator(common_dir, ec)) {
+    if (ec) {
+      break;
+    }
+    std::error_code ec2 = {};
+    if (!title_entry.is_directory(ec2)) {
+      continue;
+    }
+    // 000D0000 is a container directory holding installed package files
+    // and/or extracted package directories.
+    const auto install_dir = title_entry.path() / "000D0000";
+    std::error_code ec3 = {};
+    if (!std::filesystem::is_directory(install_dir, ec3)) {
+      continue;
+    }
+    for (const auto& e :
+         std::filesystem::directory_iterator(install_dir, ec3)) {
+      if (ec3) {
+        break;
+      }
+      std::error_code ec4 = {};
+      if (e.is_regular_file(ec4)) {
+        // Installed package file - ReadGameMeta validates the content type.
+        found.push_back(e.path());
+      } else if (e.is_directory(ec4)) {
+        // Extracted package: launchable XEX in file form.
+        auto xex = FindExtractedXex(e.path());
+        if (!xex.empty()) {
+          found.push_back(xex);
+        }
+      }
+    }
+  }
+  return found;
+}
+
 }  // namespace wx_ui
 }  // namespace app
 }  // namespace xe

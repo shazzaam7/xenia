@@ -286,6 +286,13 @@ class EmulatorWindow {
   void InstallContent();
   void ExtractZarchive();
   void CreateZarchive();
+  // Adds freshly installed/extracted titles to the game library. Runs on any
+  // thread; the library import itself hops to the UI thread. When
+  // only_inside_content is set, paths outside the content tree are skipped.
+  void AddInstalledContentToLibrary(
+      const std::shared_ptr<std::vector<Emulator::ContentInstallEntry>>&
+          entries,
+      bool only_inside_content);
   void ShowContentDirectory();
   void CpuTimeScalarReset();
   void CpuTimeScalarSetHalf();
