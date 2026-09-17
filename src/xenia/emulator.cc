@@ -1110,6 +1110,10 @@ X_STATUS Emulator::ProcessContentPackageHeader(
   installation_info.icon_ = imgui_drawer_->LoadImGuiIcon(
       std::span<const uint8_t>(header->content_metadata.title_thumbnail,
                                header->content_metadata.title_thumbnail_size));
+  installation_info.icon_bytes_.assign(
+      header->content_metadata.title_thumbnail,
+      header->content_metadata.title_thumbnail +
+          size_t(header->content_metadata.title_thumbnail_size));
 
   return X_STATUS_SUCCESS;
 }

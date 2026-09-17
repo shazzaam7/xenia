@@ -57,6 +57,15 @@ bool ReadGameMeta(const std::filesystem::path& path, GameMeta& meta_out);
 std::vector<std::filesystem::path> DiscoverGameFiles(
     const std::filesystem::path& directory);
 
+// Discovery of installed titles under the content tree:
+// <content_root>/0000000000000000/<TITLEID>/000D0000 is a container directory
+// holding installed package files (returned as-is for ReadGameMeta/launch)
+// and/or extracted package directories (contributing a launchable XEX in
+// file form, like DiscoverGameFiles). Anything else is ignored; validation
+// happens later in ReadGameMeta.
+std::vector<std::filesystem::path> DiscoverInstalledGames(
+    const std::filesystem::path& content_root);
+
 // Reads a named file out of a container without mounting anything in the live
 // VFS (standalone device instances). Name match is case-insensitive.
 bool ReadContainerFile(const std::filesystem::path& container_path,
