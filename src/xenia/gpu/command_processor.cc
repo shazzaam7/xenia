@@ -230,6 +230,11 @@ bool CommandProcessor::Initialize() {
 }
 
 void CommandProcessor::Shutdown() {
+  if (!worker_thread_) {
+    // Already shut down (e.g. explicit stop followed by GraphicsSystem
+    // teardown calling Shutdown again).
+    return;
+  }
   EndTracing();
 
   worker_running_ = false;

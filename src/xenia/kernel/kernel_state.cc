@@ -86,11 +86,7 @@ KernelState::KernelState(Emulator* emulator)
 KernelState::~KernelState() {
   SetExecutableModule(nullptr);
 
-  if (dispatch_thread_running_) {
-    dispatch_thread_running_ = false;
-    dispatch_cond_.notify_all();
-    dispatch_thread_->Wait(0, 0, 0, nullptr);
-  }
+  ShutdownDispatchThread();
 
   executable_module_.reset();
   user_modules_.clear();
@@ -106,6 +102,14 @@ KernelState::~KernelState() {
 }
 
 KernelState* KernelState::shared() { return shared_kernel_state_; }
+
+void KernelState::ShutdownDispatchThread() {
+  if (dispatch_thread_running_) {
+    dispatch_thread_running_ = false;
+    dispatch_cond_.notify_all();
+    dispatch_thread_->Wait(0, 0, 0, nullptr);
+  }
+}
 
 xex2_opt_execution_info* KernelState::GetExecutionInfo() const {
   if (!executable_module_) {
@@ -947,6 +951,27 @@ void KernelState::TerminateTitle() {
     global_lock.unlock();
     XThread::GetCurrentThread()->Terminate(0);
   }
+}
+
+bool KernelState::ExitToDashboard(std::string host_path,
+                                  std::string launch_path,
+                                  uint32_t launch_flags,
+                                  std::vector<uint8_t> launch_data) {
+  XELOGI("KernelState::ExitToDashboard");
+  if (auto on_guest_title_exit = emulator_->on_guest_title_exit()) {
+    if (on_guest_title_exit(std::move(host_path), std::move(launch_path),
+                            launch_flags, std::move(launch_data))) {
+      // Park off guest code until the in-process reset terminates us; Suspend
+      // can return on POSIX, so loop rather than fall through to
+      // TerminateTitle.
+      auto* current_thread = XThread::GetCurrentThread();
+      current_thread->Suspend(nullptr);
+      while (true) {
+        xe::threading::Sleep(std::chrono::seconds(1));
+      }
+    }
+  }
+  return false;
 }
 
 void KernelState::RegisterThread(XThread* thread) {
