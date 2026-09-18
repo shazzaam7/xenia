@@ -774,30 +774,12 @@ bool EmulatorWindow::Initialize() {
   auto main_menu = MenuItem::Create(MenuItem::Type::kNormal);
   auto file_menu = MenuItem::Create(MenuItem::Type::kPopup, "&File");
   auto recent_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Open Recent");
-  auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
   FillRecentlyLaunchedTitlesMenu(recent_menu.get());
   {
     file_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "&Open...", "Ctrl+O",
                          std::bind(&EmulatorWindow::FileOpen, this)));
     file_menu->AddChild(std::move(recent_menu));
-    file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-#ifdef XENIA_HAS_WX_UI
-    file_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Add Game...",
-                         std::bind(&EmulatorWindow::LibraryAddGame, this)));
-    file_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Scan Folder...",
-                         std::bind(&EmulatorWindow::LibraryScanFolder, this)));
-    file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-#endif
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Create",
-                         std::bind(&EmulatorWindow::CreateZarchive, this)));
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Extract",
-                         std::bind(&EmulatorWindow::ExtractZarchive, this)));
-    file_menu->AddChild(std::move(zar_menu));
     file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     {
       auto stop = MenuItem::Create(MenuItem::Type::kString, "Stop",
@@ -806,10 +788,6 @@ bool EmulatorWindow::Initialize() {
       stop_item_ = stop.get();
       file_menu->AddChild(std::move(stop));
     }
-    file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-    file_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Show content directory...",
-        std::bind(&EmulatorWindow::ShowContentDirectory, this)));
     file_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     file_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "E&xit", "Alt+F4",
@@ -828,6 +806,7 @@ bool EmulatorWindow::Initialize() {
 
   // Content Menu
   auto content_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Content");
+  auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
   {
     content_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "Install Content",
@@ -835,9 +814,19 @@ bool EmulatorWindow::Initialize() {
     content_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "Extract Content",
                          std::bind(&EmulatorWindow::ExtractContent, this, "")));
+    zar_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "Create",
+                         std::bind(&EmulatorWindow::CreateZarchive, this)));
+    zar_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "Extract",
+                         std::bind(&EmulatorWindow::ExtractZarchive, this)));
+    content_menu->AddChild(std::move(zar_menu));
     content_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Show Installed Content",
         std::bind(&EmulatorWindow::ToggleContentListDialog, this)));
+    content_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "Show content directory...",
+        std::bind(&EmulatorWindow::ShowContentDirectory, this)));
   }
   main_menu->AddChild(std::move(content_menu));
 
@@ -1425,18 +1414,6 @@ void EmulatorWindow::LibraryBoot(size_t index, int disc_number,
   if (XFAILED(RunTitle(path))) {
     has_library_boot_ = false;
   }
-}
-
-void EmulatorWindow::LibraryAddGame() {
-#ifdef XENIA_HAS_WX_UI
-  static_cast<wx_ui::WxWindow*>(window_.get())->OnAddGame();
-#endif
-}
-
-void EmulatorWindow::LibraryScanFolder() {
-#ifdef XENIA_HAS_WX_UI
-  static_cast<wx_ui::WxWindow*>(window_.get())->OnScanFolder();
-#endif
 }
 
 void EmulatorWindow::UpdateStopEnabled() {
@@ -2562,6 +2539,9 @@ void EmulatorWindow::FinishTitleLaunch(
       has_library_boot_ = false;
     }
     wx_window->ShowGame();
+    // Match the game view to the XConfig (or custom override) resolution.
+    const auto resolution = emulator_->graphics_system()->GetResolution();
+    wx_window->SizeGameView(resolution.first, resolution.second);
 #endif
     UpdateStopEnabled();
   }

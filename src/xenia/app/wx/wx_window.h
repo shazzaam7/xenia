@@ -83,6 +83,10 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
                      const std::filesystem::path& content_root);
   void ShowLibrary();
   void ShowGame();
+  // Resizes the frame client area so the game view matches the given guest
+  // resolution (logical pixels at medium DPI), clamped to the display work
+  // area. No-op when fullscreen or before the frame exists.
+  void SizeGameView(uint32_t width, uint32_t height);
   bool IsLibraryAttached() const { return library_view_ != nullptr; }
   size_t LibraryEntryCount() const { return library_entries_.size(); }
   const GameEntry* LibraryEntry(size_t index) const;

@@ -22,6 +22,7 @@
 #include <wx/dcclient.h>
 #include <wx/dialog.h>
 #include <wx/dirdlg.h>
+#include <wx/display.h>
 #include <wx/dnd.h>
 #include <wx/filedlg.h>
 #include <wx/frame.h>
@@ -706,6 +707,22 @@ void WxWindow::AttachLibrary(LibraryBootCallback on_boot,
   library_view_->SetEntries(library_entries_);
   ScanInstalledGames();
   ShowLibrary();
+
+  // Size the frame to the library content, like the content install dialog
+  // sizes to its rows: grow a too-small client area (e.g. a tiny persisted
+  // window size) to fit, clamped to the display work area. Never shrinks a
+  // larger window.
+  wxSize size = library_view_->GetBestSize();
+  size.IncTo(wxSize(960, 540));
+  wxDisplay display(wxDisplay::GetFromWindow(frame_));
+  if (display.IsOk()) {
+    const wxRect work = display.GetClientArea();
+    size.x = std::min(size.x, work.width);
+    size.y = std::min(size.y, work.height);
+  }
+  if (size != frame_->GetClientSize()) {
+    frame_->SetClientSize(size);
+  }
 }
 
 void WxWindow::ShowLibrary() {
@@ -724,6 +741,21 @@ void WxWindow::ShowGame() {
   book_->ChangeSelection(0);
   frame_->Layout();
   view_->SetFocus();
+}
+
+void WxWindow::SizeGameView(uint32_t width, uint32_t height) {
+  if (!frame_ || !book_ || IsFullscreen() || !width || !height) {
+    return;
+  }
+  wxSize size(int(ConvertSizeDpi(width, GetDpi(), GetMediumDpi())),
+              int(ConvertSizeDpi(height, GetDpi(), GetMediumDpi())));
+  wxDisplay display(wxDisplay::GetFromWindow(frame_));
+  if (display.IsOk()) {
+    const wxRect work = display.GetClientArea();
+    size.x = std::min(size.x, work.width);
+    size.y = std::min(size.y, work.height);
+  }
+  frame_->SetClientSize(size);
 }
 
 const GameEntry* WxWindow::LibraryEntry(size_t index) const {

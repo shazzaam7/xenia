@@ -280,8 +280,6 @@ class EmulatorWindow {
                                 std::vector<uint8_t> launch_data);
   void LibraryBoot(size_t index, int disc_number,
                    const std::filesystem::path& path);
-  void LibraryAddGame();
-  void LibraryScanFolder();
   void UpdateStopEnabled();
   void InstallContent();
   void ExtractZarchive();
