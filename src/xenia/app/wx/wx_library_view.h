@@ -42,6 +42,7 @@ class WxLibraryView : public wxPanel {
     virtual void OnAddGame() = 0;
     virtual void OnScanFolder() = 0;
     virtual void OnProfileMenu() = 0;
+    virtual void OnViewContent(size_t index) = 0;
   };
 
   WxLibraryView(wxWindow* parent, Delegate* delegate,

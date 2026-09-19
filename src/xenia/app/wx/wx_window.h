@@ -113,6 +113,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnAddGame() override;
   void OnScanFolder() override;
   void OnProfileMenu() override;
+  void OnViewContent(size_t index) override;
 
  protected:
   bool OpenImpl() override;
