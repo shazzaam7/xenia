@@ -38,6 +38,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "xenia/app/wx/wx_game_content_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
@@ -997,6 +998,35 @@ void WxWindow::OnBootGame(size_t index, int disc_number) {
 }
 
 void WxWindow::OnRemoveGame(size_t index) { RemoveLibraryEntry(index); }
+
+void WxWindow::OnViewContent(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->title_id.empty()) {
+    return;
+  }
+  auto* kernel_state = kernel_state_ ? kernel_state_() : nullptr;
+  if (!kernel_state) {
+    return;
+  }
+  uint32_t title_id = 0;
+  for (const char c : entry->title_id) {
+    title_id <<= 4;
+    if (c >= '0' && c <= '9') {
+      title_id |= uint32_t(c - '0');
+    } else if (c >= 'A' && c <= 'F') {
+      title_id |= uint32_t(c - 'A' + 10);
+    } else if (c >= 'a' && c <= 'f') {
+      title_id |= uint32_t(c - 'a' + 10);
+    } else {
+      return;
+    }
+  }
+  if (!title_id) {
+    return;
+  }
+  ShowGameContentDialog(library_view_, kernel_state, library_content_root_,
+                        title_id, entry->name);
+}
 
 void WxWindow::OnShowInFolder(size_t index) {
   const GameEntry* entry = LibraryEntry(index);
