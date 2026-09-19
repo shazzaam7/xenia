@@ -16,26 +16,39 @@
 #include <wx/button.h>
 #include <wx/checkbox.h>
 #include <wx/choice.h>
+#include <wx/dcmemory.h>
 #include <wx/dialog.h>
 #include <wx/filedlg.h>
 #include <wx/image.h>
+#include <wx/imaglist.h>
+#include <wx/listctrl.h>
+#include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/mstream.h>
 #include <wx/scrolwin.h>
+#include <wx/settings.h>
 #include <wx/sizer.h>
+#include <wx/srchctrl.h>
 #include <wx/statbmp.h>
 #include <wx/statbox.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/utils.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <iterator>
 #include <map>
 #include <set>
 #include <vector>
 
 #include "xenia/app/wx/wx_util.h"
+#include "xenia/app/wx/wx_window.h"
+#include "xenia/app/wx/wx_window_priv.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/png_utils.h"
 #include "xenia/base/string.h"
 #include "xenia/base/string_util.h"
@@ -624,6 +637,313 @@ bool ShowCreateProfileDialog(wxWindow* parent,
   }
   WxCreateProfileDialog dialog(parent, kernel_state, with_migration);
   return dialog.ShowModal() == wxID_OK;
+}
+
+namespace {
+
+constexpr int kTitleIconPx = 64;
+
+enum : int {
+  kIdTitleSaveDir = wxID_HIGHEST + 300,
+  kIdTitleDlcDir,
+  kIdTitleUpdateDir,
+  kIdTitleRefresh,
+  kIdTitleDelete,
+};
+
+std::string PlayedLabel(const kernel::xam::TitleInfo& entry) {
+  if (!entry.WasTitlePlayed()) {
+    return "Unknown";
+  }
+  const std::time_t t = std::chrono::system_clock::to_time_t(
+      std::chrono::system_clock::time_point(
+          entry.last_played.time_since_epoch()));
+  std::tm tm = {};
+#ifdef _WIN32
+  localtime_s(&tm, &t);
+#else
+  localtime_r(&t, &tm);
+#endif
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tm);
+  return buf;
+}
+
+class WxPlayedTitlesDialog : public wxDialog {
+ public:
+  static wxBitmap Placeholder() {
+    wxBitmap bitmap(kTitleIconPx, kTitleIconPx, 32);
+    wxMemoryDC dc(bitmap);
+    dc.SetBackground(
+        wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
+    dc.Clear();
+    dc.SelectObject(wxNullBitmap);
+    return bitmap;
+  }
+
+  WxPlayedTitlesDialog(wxWindow* parent, kernel::KernelState* kernel_state,
+                       uint64_t xuid)
+      : wxDialog(parent, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
+                 wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
+        kernel_state_(kernel_state),
+        xuid_(xuid) {
+    auto* profiles = kernel_state_->xam_state()->profile_manager();
+    const auto* profile = profiles->GetProfile(xuid_);
+    SetTitle(WxLabel((profile ? profile->name() : "Profile") +
+                     std::string("'s Games List")));
+    Reload();
+
+    auto* outer = new wxBoxSizer(wxVERTICAL);
+    if (info_.size() > 10) {
+      search_ = new wxSearchCtrl(this, wxID_ANY);
+      search_->SetHint("Search");
+      search_->ShowCancelButton(true);
+      search_->Bind(wxEVT_SEARCH, &WxPlayedTitlesDialog::OnSearch, this);
+      search_->Bind(wxEVT_TEXT, &WxPlayedTitlesDialog::OnSearch, this);
+      search_->Bind(wxEVT_SEARCH_CANCEL, &WxPlayedTitlesDialog::OnSearchCancel,
+                    this);
+      outer->Add(search_, 0, wxEXPAND | wxALL, 8);
+    }
+    if (info_.empty()) {
+      auto* hint =
+          new wxStaticText(this, wxID_ANY, "There are no titles, so far.",
+                           wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
+      outer->Add(hint, 1, wxEXPAND | wxALL, 16);
+    } else {
+      list_ = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                             wxLC_REPORT | wxLC_SINGLE_SEL);
+      list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, kTitleIconPx + 6);
+      list_->InsertColumn(1, "Title", wxLIST_FORMAT_LEFT, 220);
+      list_->InsertColumn(2, "Achievements", wxLIST_FORMAT_LEFT, 220);
+      list_->InsertColumn(3, "Last played", wxLIST_FORMAT_LEFT, 140);
+      images_ = new wxImageList(kTitleIconPx, kTitleIconPx, true);
+      images_->Add(Placeholder());
+      list_->AssignImageList(images_, wxIMAGE_LIST_SMALL);
+      list_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, &WxPlayedTitlesDialog::OnContext,
+                  this);
+      outer->Add(list_, 1, wxEXPAND | wxALL, 8);
+      Populate();
+    }
+    auto* close_button = new wxButton(this, wxID_CLOSE, "Close");
+    auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+    buttons->AddStretchSpacer();
+    buttons->Add(close_button, 0, wxRIGHT | wxBOTTOM, 8);
+    outer->Add(buttons, 0, wxEXPAND);
+    SetSizer(outer);
+    Fit();
+    wxSize size = GetSize();
+    size.x = std::min(size.x, 760);
+    size.y = std::min(size.y, 600);
+    SetSize(size);
+    close_button->Bind(
+        wxEVT_BUTTON, [this](wxCommandEvent&) { Close(); }, wxID_CLOSE);
+  }
+
+ private:
+  void Reload() {
+    info_ = kernel_state_->xam_state()->user_tracker()->GetPlayedTitles(xuid_);
+  }
+
+  bool Matches(const kernel::xam::TitleInfo& entry) const {
+    if (filter_.empty()) {
+      return true;
+    }
+    std::string name = xe::to_utf8(entry.title_name);
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return char(std::tolower(c)); });
+    return name.find(filter_) != std::string::npos;
+  }
+
+  void Populate() {
+    list_->DeleteAllItems();
+    images_->RemoveAll();
+    images_->Add(Placeholder());
+    order_.clear();
+    for (size_t i = 0; i < info_.size(); i++) {
+      if (!Matches(info_[i])) {
+        continue;
+      }
+      order_.push_back(i);
+      const long row = list_->InsertItem(list_->GetItemCount(), 0);
+      list_->SetItemData(row, i);
+      list_->SetItem(row, 1, WxLabel(xe::to_utf8(info_[i].title_name)));
+      char stats[96];
+      std::snprintf(
+          stats, sizeof(stats), "%u/%u Achievements unlocked (%u Gamerscore)",
+          info_[i].unlocked_achievements_count, info_[i].achievements_count,
+          info_[i].title_earned_gamerscore);
+      list_->SetItem(row, 2, WxLabel(stats));
+      list_->SetItem(row, 3, WxLabel("Last played: " + PlayedLabel(info_[i])));
+    }
+    // Icons after rows so image indices line up on rebuild.
+    for (size_t r = 0; r < order_.size(); r++) {
+      const auto& icon = info_[order_[r]].icon;
+      int index = 0;
+      if (!icon.empty()) {
+        wxMemoryInputStream stream(icon.data(), icon.size());
+        wxImage image(stream, wxBITMAP_TYPE_ANY);
+        if (image.IsOk()) {
+          index = images_->Add(wxBitmap(
+              image.Scale(kTitleIconPx, kTitleIconPx, wxIMAGE_QUALITY_HIGH)));
+        }
+      }
+      list_->SetItemImage(long(r), index);
+    }
+  }
+
+  void OnSearch(wxCommandEvent& event) {
+    filter_ = event.GetString().ToStdString();
+    std::transform(filter_.begin(), filter_.end(), filter_.begin(),
+                   [](unsigned char c) { return char(std::tolower(c)); });
+    Populate();
+  }
+
+  void OnSearchCancel(wxCommandEvent&) {
+    filter_.clear();
+    search_->Clear();
+    Populate();
+  }
+
+  void OnContext(wxListEvent& event) {
+    const long row = event.GetIndex();
+    if (row < 0 || size_t(row) >= order_.size()) {
+      return;
+    }
+    auto& entry = info_[order_[size_t(row)]];
+    auto* profiles = kernel_state_->xam_state()->profile_manager();
+    const auto save_path = profiles->GetProfileContentPath(
+        xuid_, entry.id, xe::XContentType::kSavedGame);
+    const auto dlc_path = profiles->GetProfileContentPath(
+        0, entry.id, xe::XContentType::kMarketplaceContent);
+    const auto tu_path = profiles->GetProfileContentPath(
+        0, entry.id, xe::XContentType::kInstaller);
+    std::error_code ec = {};
+    wxMenu menu;
+    menu.Append(kIdTitleSaveDir, "Open savefile directory")
+        ->Enable(std::filesystem::exists(save_path, ec));
+    ec.clear();
+    menu.Append(kIdTitleDlcDir, "Open DLC directory")
+        ->Enable(std::filesystem::exists(dlc_path, ec));
+    ec.clear();
+    menu.Append(kIdTitleUpdateDir, "Open Title Update directory")
+        ->Enable(std::filesystem::exists(tu_path, ec));
+    menu.AppendSeparator();
+    const bool title_open = kernel_state_->emulator()->is_title_open();
+    menu.Append(kIdTitleRefresh, "Refresh title stats")->Enable(!title_open);
+    menu.Append(kIdTitleDelete, "Delete title...")->Enable(!title_open);
+    menu.Bind(
+        wxEVT_MENU,
+        [this, &entry, save_path, dlc_path, tu_path](wxCommandEvent& e) {
+          switch (e.GetId()) {
+            case kIdTitleSaveDir:
+              wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(save_path)));
+              break;
+            case kIdTitleDlcDir:
+              wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(dlc_path)));
+              break;
+            case kIdTitleUpdateDir:
+              wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(tu_path)));
+              break;
+            case kIdTitleRefresh: {
+              auto* tracker = kernel_state_->xam_state()->user_tracker();
+              tracker->RefreshTitleSummary(xuid_, entry.id);
+              if (const auto updated =
+                      tracker->GetUserTitleInfo(xuid_, entry.id)) {
+                entry = *updated;
+              }
+              Populate();
+              break;
+            }
+            case kIdTitleDelete: {
+              std::string warning;
+              if (entry.unlocked_achievements_count != 0) {
+                warning =
+                    "This will erase all unlocked achievements and potentially "
+                    "erase progress for this title. ";
+              }
+              const int answer = wxMessageBox(
+                  WxLabel(warning + "Delete this title from the played list?"),
+                  "Delete title", wxYES_NO | wxICON_WARNING, this);
+              if (answer == wxYES) {
+                kernel_state_->xam_state()
+                    ->user_tracker()
+                    ->RemoveTitleFromPlayedList(xuid_, entry.id);
+                Reload();
+                Populate();
+              }
+              break;
+            }
+            default:
+              break;
+          }
+        },
+        kIdTitleSaveDir, kIdTitleDelete);
+    list_->PopupMenu(&menu);
+  }
+
+  kernel::KernelState* kernel_state_;
+  const uint64_t xuid_;
+  std::vector<kernel::xam::TitleInfo> info_;
+  std::vector<size_t> order_;
+  std::string filter_;
+  wxListCtrl* list_ = nullptr;
+  wxImageList* images_ = nullptr;
+  wxSearchCtrl* search_ = nullptr;
+};
+
+}  // namespace
+
+void ShowPlayedTitlesDialog(wxWindow* parent, kernel::KernelState* kernel_state,
+                            uint64_t xuid) {
+  if (!parent || !kernel_state || !xuid) {
+    return;
+  }
+  WxPlayedTitlesDialog dialog(parent, kernel_state, xuid);
+  dialog.ShowModal();
+}
+
+bool ShowNoProfileDialog(WxWindow* window, kernel::KernelState* kernel_state,
+                         const std::filesystem::path& content_root) {
+  if (!window || !kernel_state) {
+    return false;
+  }
+  if (kernel_state->xam_state()->profile_manager()->GetAccountCount()) {
+    return false;
+  }
+  wxWindow* parent = window->view() ? static_cast<wxWindow*>(window->view())
+                                    : static_cast<wxWindow*>(window->frame());
+  if (!parent) {
+    return false;
+  }
+  const bool migrate = !xe::filesystem::ListDirectories(content_root).empty();
+  wxDialog dialog(parent, wxID_ANY, "No Profiles Found", wxDefaultPosition,
+                  wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+  auto* outer = new wxBoxSizer(wxVERTICAL);
+  outer->Add(new wxStaticText(
+                 &dialog, wxID_ANY,
+                 "There is no profile available! You will not be able to save "
+                 "without one.\n\nWould you like to create one?"),
+             0, wxALL, 8);
+  auto* create_button = new wxButton(
+      &dialog, wxID_ANY,
+      migrate ? "Create profile && migrate data" : "Create Profile");
+  auto* close_button = new wxButton(&dialog, wxID_CANCEL, "Close");
+  auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+  buttons->Add(create_button, 0, wxRIGHT, 8);
+  buttons->Add(close_button, 0);
+  outer->Add(buttons, 0, wxALIGN_RIGHT | wxALL, 8);
+  dialog.SetSizerAndFit(outer);
+  bool created = false;
+  create_button->Bind(
+      wxEVT_BUTTON,
+      [&](wxCommandEvent&) {
+        if (ShowCreateProfileDialog(parent, kernel_state, migrate)) {
+          created = true;
+          dialog.EndModal(wxID_OK);
+        }
+      },
+      create_button->GetId());
+  return dialog.ShowModal() == wxID_OK && created;
 }
 
 }  // namespace wx_ui

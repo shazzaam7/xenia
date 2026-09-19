@@ -11,6 +11,7 @@
 #define XENIA_APP_WX_PROFILE_DIALOG_H_
 
 #include <cstdint>
+#include <filesystem>
 
 class wxWindow;
 
@@ -20,6 +21,8 @@ class KernelState;
 }  // namespace kernel
 namespace app {
 namespace wx_ui {
+
+class WxWindow;
 
 // Modal wxWidgets port of kernel::xam::ui::GamercardUI ("Modify" profile).
 // Runs entirely on the UI thread; returns true when the user saved (the
@@ -33,6 +36,17 @@ bool ShowGamercardDialog(wxWindow* parent, kernel::KernelState* kernel_state,
 bool ShowCreateProfileDialog(wxWindow* parent,
                              kernel::KernelState* kernel_state,
                              bool with_migration);
+
+// Modal wxWidgets port of kernel::xam::ui::TitleListUI: the profile's played
+// titles with per-title folder actions, refresh and delete. Row activation
+// (achievements detail, GameAchievementsUI) is intentionally not ported.
+void ShowPlayedTitlesDialog(wxWindow* parent, kernel::KernelState* kernel_state,
+                            uint64_t xuid);
+
+// Modal wxWidgets port of NoProfileDialog (minus "Open profile menu", which
+// the toolbar popup covers). Returns true when a profile was created.
+bool ShowNoProfileDialog(WxWindow* window, kernel::KernelState* kernel_state,
+                         const std::filesystem::path& content_root);
 
 }  // namespace wx_ui
 }  // namespace app
