@@ -53,6 +53,7 @@
 #include "xenia/ui/virtual_key.h"
 
 #ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_console_settings_dialog.h"
 #include "xenia/app/wx/wx_content_install_dialog.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/app/wx/wx_window.h"
@@ -818,9 +819,9 @@ bool EmulatorWindow::Initialize() {
   // Profile Menu
   auto profile_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Profile");
   {
-    profile_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Show Profile Menu", "",
-        std::bind(&EmulatorWindow::ToggleProfilesConfigDialog, this)));
+    profile_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "&Profile", "",
+                         std::bind(&EmulatorWindow::ShowProfileMenu, this)));
   }
   main_menu->AddChild(std::move(profile_menu));
 
@@ -842,14 +843,22 @@ bool EmulatorWindow::Initialize() {
                          std::bind(&EmulatorWindow::ExtractZarchive, this)));
     content_menu->AddChild(std::move(zar_menu));
     content_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Show Installed Content",
-        std::bind(&EmulatorWindow::ToggleContentListDialog, this)));
-    content_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Show content directory...",
         std::bind(&EmulatorWindow::ShowContentDirectory, this)));
   }
   main_menu->AddChild(std::move(content_menu));
 
+  // Console menu
+  auto console_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Console");
+  {
+    console_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "&Open console settings", "",
+        std::bind(&EmulatorWindow::ShowConsoleSettingsDialog, this)));
+  }
+  main_menu->AddChild(std::move(console_menu));
+
+  // Debug menu (CPU + GPU moved here).
+  auto debug_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Debug");
   // CPU menu.
   auto cpu_menu = MenuItem::Create(MenuItem::Type::kPopup, "&CPU");
   {
@@ -884,7 +893,7 @@ bool EmulatorWindow::Initialize() {
         "Ctrl+Pause/Break",
         std::bind(&EmulatorWindow::CpuBreakIntoHostDebugger, this)));
   }
-  main_menu->AddChild(std::move(cpu_menu));
+  debug_menu->AddChild(std::move(cpu_menu));
 
   // GPU menu.
   auto gpu_menu = MenuItem::Create(MenuItem::Type::kPopup, "&GPU");
@@ -899,7 +908,8 @@ bool EmulatorWindow::Initialize() {
         MenuItem::Create(MenuItem::Type::kString, "&Clear Runtime Caches", "F5",
                          std::bind(&EmulatorWindow::GpuClearCaches, this)));
   }
-  main_menu->AddChild(std::move(gpu_menu));
+  debug_menu->AddChild(std::move(gpu_menu));
+  main_menu->AddChild(std::move(debug_menu));
 
   // Display menu.
   auto display_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Display");
@@ -939,15 +949,6 @@ bool EmulatorWindow::Initialize() {
         std::bind(&EmulatorWindow::ToggleXMPConfigDialog, this)));
   }
   main_menu->AddChild(std::move(xmp_menu));
-
-  // Console menu
-  auto console_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Console");
-  {
-    console_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Open console settings", "",
-        std::bind(&EmulatorWindow::ToggleConsoleSettingsDialog, this)));
-  }
-  main_menu->AddChild(std::move(console_menu));
 
   // Help menu.
   auto help_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Help");
@@ -1453,6 +1454,23 @@ void EmulatorWindow::ShowLibrary() {
 void EmulatorWindow::ShowGame() {
 #ifdef XENIA_HAS_WX_UI
   static_cast<wx_ui::WxWindow*>(window_.get())->ShowGame();
+#endif
+}
+
+void EmulatorWindow::ShowProfileMenu() {
+#ifdef XENIA_HAS_WX_UI
+  static_cast<wx_ui::WxWindow*>(window_.get())->OnProfileMenu();
+#else
+  ToggleProfilesConfigDialog();
+#endif
+}
+
+void EmulatorWindow::ShowConsoleSettingsDialog() {
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  wx_ui::ShowConsoleSettingsDialog(wx_window, emulator_->kernel_state());
+#else
+  ToggleConsoleSettingsDialog();
 #endif
 }
 

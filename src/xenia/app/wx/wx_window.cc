@@ -357,10 +357,12 @@ void WxWindow::RebuildMenuBar() {
   menu_items_by_id_.clear();
   const WxMenuItem* root = static_cast<const WxMenuItem*>(GetMainMenu());
   if (!root) {
+    profile_menu_ = nullptr;
     frame_->SetMenuBar(nullptr);
     return;
   }
   auto bar = new wxMenuBar();
+  profile_menu_ = nullptr;
   for (auto popup : root->wx_children()) {
     if (popup->type() != ui::MenuItem::Type::kPopup) {
       continue;
@@ -370,9 +372,19 @@ void WxWindow::RebuildMenuBar() {
     if (!popup->enabled()) {
       bar->EnableTop(bar->GetMenuCount() - 1, false);
     }
+    if (popup->text() == "&Profile") {
+      // Owned by the menu bar (recreated with it); contents are filled live
+      // on open instead of from the static MenuItem tree.
+      profile_menu_ = menu;
+      RefreshProfileMenu();
+    }
   }
   // Replaces (and deletes) the previous bar.
   frame_->SetMenuBar(bar);
+  if (!menu_open_bound_) {
+    frame_->Bind(wxEVT_MENU_OPEN, &WxWindow::OnMenuOpen, this);
+    menu_open_bound_ = true;
+  }
 }
 
 wxMenu* WxWindow::BuildPopupMenu(WxMenuItem* popup_item) {
@@ -1087,6 +1099,29 @@ void WxWindow::OnProfileMenu() {
   if (!library_view_) {
     return;
   }
+  wxMenu menu;
+  FillProfileMenu(&menu, library_view_);
+  library_view_->PopupMenu(&menu);
+}
+
+void WxWindow::RefreshProfileMenu() {
+  if (!profile_menu_) {
+    return;
+  }
+  while (profile_menu_->GetMenuItemCount()) {
+    profile_menu_->Destroy(profile_menu_->FindItemByPosition(0));
+  }
+  FillProfileMenu(profile_menu_, frame_);
+}
+
+void WxWindow::OnMenuOpen(wxMenuEvent& event) {
+  if (event.GetMenu() == profile_menu_) {
+    RefreshProfileMenu();
+  }
+  event.Skip();
+}
+
+void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
   auto* kernel_state = kernel_state_ ? kernel_state_() : nullptr;
   auto* profiles =
       kernel_state ? kernel_state->xam_state()->profile_manager() : nullptr;
@@ -1102,7 +1137,6 @@ void WxWindow::OnProfileMenu() {
     menu->Bind(wxEVT_MENU, [fn](wxCommandEvent&) { fn(); }, id);
   };
 
-  wxMenu menu;
   int count = 0;
   for (const auto& [xuid, account] : *profiles->GetAccounts()) {
     count++;
@@ -1139,13 +1173,13 @@ void WxWindow::OnProfileMenu() {
       bind(sub, WxLabel("Logout " + name),
            [profiles, slot] { profiles->Logout(slot); });
     }
-    bind(sub, "Modify", [this, kernel_state, xuid] {
-      ShowGamercardDialog(library_view_, kernel_state, xuid);
+    bind(sub, "Modify", [parent, kernel_state, xuid] {
+      ShowGamercardDialog(parent, kernel_state, xuid);
     });
     bind(
         sub, "Show played titles",
-        [this, kernel_state, xuid] {
-          ShowPlayedTitlesDialog(library_view_, kernel_state, xuid);
+        [parent, kernel_state, xuid] {
+          ShowPlayedTitlesDialog(parent, kernel_state, xuid);
         },
         online);
     bind(sub, "Show content directory", [profiles, xuid] {
@@ -1159,34 +1193,33 @@ void WxWindow::OnProfileMenu() {
     });
     bind(
         sub, "Delete profile",
-        [this, profiles, xuid, name] {
+        [parent, profiles, xuid, name] {
           char xuid_hex[17];
           std::snprintf(xuid_hex, sizeof(xuid_hex), "%016llX",
                         (unsigned long long)xuid);
-          const int answer = wxMessageBox(
-              WxLabel("Delete profile " + name + " (XUID " + xuid_hex +
-                      ") and all its saves?"),
-              "Delete profile", wxYES_NO | wxICON_WARNING, library_view_);
+          const int answer =
+              wxMessageBox(WxLabel("Delete profile " + name + " (XUID " +
+                                   xuid_hex + ") and all its saves?"),
+                           "Delete profile", wxYES_NO | wxICON_WARNING, parent);
           if (answer == wxYES) {
             profiles->DeleteProfile(xuid);
           }
         },
         !title_open);
-    menu.AppendSubMenu(
+    menu->AppendSubMenu(
         sub, WxLabel(name + (online ? " (Slot " + std::to_string(slot + 1) + ")"
                                     : " (offline)")));
   }
   if (!count) {
-    menu.Append(wxID_ANY, "No profiles found")->Enable(false);
+    menu->Append(wxID_ANY, "No profiles found")->Enable(false);
   }
-  bind(&menu, "Create profile", [this, profiles, kernel_state] {
+  bind(menu, "Create profile", [this, parent, profiles, kernel_state] {
     std::error_code ec = {};
     const bool migrate =
         profiles->GetAccountCount() == 0 &&
         !std::filesystem::is_empty(library_content_root_, ec) && !ec;
-    ShowCreateProfileDialog(library_view_, kernel_state, migrate);
+    ShowCreateProfileDialog(parent, kernel_state, migrate);
   });
-  library_view_->PopupMenu(&menu);
 }
 
 }  // namespace wx_ui
