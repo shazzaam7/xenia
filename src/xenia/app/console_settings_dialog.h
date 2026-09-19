@@ -14,6 +14,7 @@
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/xbox.h"
 
+#include "xenia/app/console_settings_tables.h"
 #include "xenia/kernel/xconfig.h"
 
 namespace xe {
