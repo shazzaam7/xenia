@@ -97,6 +97,10 @@ class EmulatorWindow {
   void SaveImage(const std::filesystem::path& path,
                  const xe::ui::RawImage& image);
 
+  // Shows the profile popup (same menu as the library toolbar button).
+  void ShowProfileMenu();
+  // Shows the console settings dialog (wxWidgets in wx builds).
+  void ShowConsoleSettingsDialog();
   void ToggleProfilesConfigDialog();
   void ToggleXMPConfigDialog();
   void ToggleConsoleSettingsDialog();
