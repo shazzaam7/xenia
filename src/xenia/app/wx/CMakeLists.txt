@@ -22,6 +22,8 @@ add_library(xenia-app-wx OBJECT
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_host.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_store.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_store.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_profile_dialog.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_profile_dialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_view.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_library_view.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_util.h
