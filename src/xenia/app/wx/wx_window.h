@@ -214,6 +214,15 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // Resolves the kernel state (null before setup/after shutdown,
   // re-created on every ResetTitle, so never cached).
   std::function<kernel::KernelState*()> kernel_state_;
+  // Profile menu bar submenu owned by WxWindow (filled live on open, unlike
+  // the static MenuItem tree). Null when the menu bar has no Profile entry.
+  wxMenu* profile_menu_ = nullptr;
+  bool menu_open_bound_ = false;
+  // (Re)fills a menu with the per-account profile items + Create. Shared by
+  // the menu bar entry and the toolbar popup.
+  void FillProfileMenu(wxMenu* menu, wxWindow* parent);
+  void RefreshProfileMenu();
+  void OnMenuOpen(wxMenuEvent& event);
 };
 
 class WxFilePicker : public ui::FilePicker {
