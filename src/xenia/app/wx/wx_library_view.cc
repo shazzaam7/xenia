@@ -168,13 +168,6 @@ void WxLibraryView::SetEntries(std::vector<GameEntry> entries) {
   Populate();
 }
 
-void WxLibraryView::RefreshEntry(size_t index) {
-  if (index < entries_.size()) {
-    RebuildIcons();
-    Populate();
-  }
-}
-
 void WxLibraryView::RebuildIcons() {
   small_images_->RemoveAll();
   big_images_->RemoveAll();
