@@ -1,6 +1,7 @@
 #ifndef XENIA_APP_WX_WINDOW_H_
 #define XENIA_APP_WX_WINDOW_H_
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -27,6 +28,12 @@
 #include <wx/simplebook.h>
 
 namespace xe {
+namespace kernel {
+class KernelState;
+namespace xam {
+class ProfileManager;
+}  // namespace xam
+}  // namespace kernel
 namespace app {
 namespace wx_ui {
 
@@ -80,7 +87,8 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
       size_t index, int disc_number, const std::filesystem::path& path)>;
   void AttachLibrary(LibraryBootCallback on_boot,
                      const std::filesystem::path& storage_root,
-                     const std::filesystem::path& content_root);
+                     const std::filesystem::path& content_root,
+                     std::function<kernel::KernelState*()> kernel_state);
   void ShowLibrary();
   void ShowGame();
   // Resizes the frame client area so the game view matches the given guest
@@ -104,6 +112,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnShowInFolder(size_t index) override;
   void OnAddGame() override;
   void OnScanFolder() override;
+  void OnProfileMenu() override;
 
  protected:
   bool OpenImpl() override;
@@ -164,7 +173,6 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnWxDpiChanged(const wxSize& new_dpi);
   void OnWxCursorTimer();
   void OnWxDeviceChange(bool is_arrival);
-
   void ForwardWxMouse(wxMouseEvent& event, int kind);
   void SetCursorIfFocusedOnView(bool hide_cursor) const;
   void HandleWxSizeUpdate(WindowDestructionReceiver& destruction_receiver);
@@ -202,6 +210,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   std::filesystem::path library_storage_root_;
   std::filesystem::path library_content_root_;
   std::vector<GameEntry> library_entries_;
+  // Resolves the kernel state (null before setup/after shutdown,
+  // re-created on every ResetTitle, so never cached).
+  std::function<kernel::KernelState*()> kernel_state_;
 };
 
 class WxFilePicker : public ui::FilePicker {

@@ -54,6 +54,7 @@
 
 #ifdef XENIA_HAS_WX_UI
 #include "xenia/app/wx/wx_content_install_dialog.h"
+#include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/app/wx/wx_window.h"
 #endif
 
@@ -277,12 +278,31 @@ void EmulatorWindow::ShutdownGraphicsSystemPresenterPainting() {
 }
 
 void EmulatorWindow::OnEmulatorInitialized() {
-  if (!emulator_->kernel_state()
-           ->xam_state()
-           ->profile_manager()
-           ->GetAccountCount()) {
-    new NoProfileDialog(imgui_drawer_.get(), this);
-    disable_hotkeys_ = true;
+#ifdef XENIA_HAS_WX_UI
+  // The ImGui dialog renders behind the library view when attached.
+  if (auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+      wx_window->IsLibraryAttached()) {
+    if (!emulator_->kernel_state()
+             ->xam_state()
+             ->profile_manager()
+             ->GetAccountCount()) {
+      disable_hotkeys_ = true;
+      if (wx_ui::ShowNoProfileDialog(wx_window, emulator_->kernel_state(),
+                                     emulator_->content_root())) {
+        wx_window->ShowLibrary();
+      }
+      disable_hotkeys_ = false;
+    }
+  } else
+#endif
+  {
+    if (!emulator_->kernel_state()
+             ->xam_state()
+             ->profile_manager()
+             ->GetAccountCount()) {
+      new NoProfileDialog(imgui_drawer_.get(), this);
+      disable_hotkeys_ = true;
+    }
   }
 
   emulator_initialized_ = true;
@@ -973,7 +993,8 @@ bool EmulatorWindow::Initialize() {
           [this](size_t index, int disc, const std::filesystem::path& path) {
             LibraryBoot(index, disc, path);
           },
-          emulator_->storage_root(), emulator_->content_root());
+          emulator_->storage_root(), emulator_->content_root(),
+          [this]() { return emulator_->kernel_state(); });
 #endif
 
   Profiler::SetUserIO(kZOrderProfiler, window_.get(), nullptr, nullptr);

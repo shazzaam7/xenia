@@ -36,10 +36,15 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
+#include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/base/logging.h"
+#include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/xam/profile_manager.h"
+#include "xenia/kernel/xam/xam_state.h"
 
 #if defined(__WXMSW__)
 #include <Dbt.h>
@@ -683,15 +688,17 @@ void WxWindowedAppContext::PlatformQuitFromUIThread() {
   }
 }
 
-void WxWindow::AttachLibrary(LibraryBootCallback on_boot,
-                             const std::filesystem::path& storage_root,
-                             const std::filesystem::path& content_root) {
+void WxWindow::AttachLibrary(
+    LibraryBootCallback on_boot, const std::filesystem::path& storage_root,
+    const std::filesystem::path& content_root,
+    std::function<kernel::KernelState*()> kernel_state) {
   if (library_view_ || !frame_ || !view_) {
     return;
   }
   library_on_boot_ = std::move(on_boot);
   library_storage_root_ = storage_root;
   library_content_root_ = content_root;
+  kernel_state_ = std::move(kernel_state);
   LoadLibrary(library_storage_root_, library_entries_);
 
   book_ = new wxSimplebook(frame_, wxID_ANY);
@@ -1042,6 +1049,112 @@ void WxWindow::OnScanFolder() {
     return;
   }
   ScanLibraryFolder(WxToPath(dialog.GetPath()));
+}
+
+void WxWindow::OnProfileMenu() {
+  if (!library_view_) {
+    return;
+  }
+  auto* kernel_state = kernel_state_ ? kernel_state_() : nullptr;
+  auto* profiles =
+      kernel_state ? kernel_state->xam_state()->profile_manager() : nullptr;
+  if (!profiles) {
+    return;
+  }
+  const bool title_open = kernel_state->title_id() != 0;
+
+  auto bind = [](wxMenu* menu, const wxString& label, std::function<void()> fn,
+                 bool enabled = true) {
+    const int id = wxWindow::NewControlId();
+    menu->Append(id, label)->Enable(enabled);
+    menu->Bind(wxEVT_MENU, [fn](wxCommandEvent&) { fn(); }, id);
+  };
+
+  wxMenu menu;
+  int count = 0;
+  for (const auto& [xuid, account] : *profiles->GetAccounts()) {
+    count++;
+    const uint8_t slot = profiles->GetUserIndexAssignedToProfile(xuid);
+    const bool online = slot < XUserMaxUserCount;
+    const std::string name = account.GetGamertagString();
+    auto* sub = new wxMenu();
+    if (!online) {
+      auto* slots = new wxMenu();
+      auto add_slot = [&](const std::string& label, uint8_t target,
+                          bool enabled) {
+        bind(
+            slots, WxLabel(label),
+            [profiles, xuid, target] {
+              if (target == XUserIndexAny) {
+                if (!profiles->IsAnyProfileSlotFree()) {
+                  return;
+                }
+              } else if (profiles->GetProfile(target) != nullptr) {
+                return;
+              }
+              profiles->Login(xuid, target);
+            },
+            enabled);
+      };
+      add_slot("First available", XUserIndexAny,
+               profiles->IsAnyProfileSlotFree());
+      for (uint8_t s = 0; s < XUserMaxUserCount; s++) {
+        add_slot("Slot " + std::to_string(s + 1), s,
+                 profiles->GetProfile(s) == nullptr);
+      }
+      sub->AppendSubMenu(slots, "Login");
+    } else {
+      bind(sub, WxLabel("Logout " + name),
+           [profiles, slot] { profiles->Logout(slot); });
+    }
+    bind(sub, "Modify", [this, kernel_state, xuid] {
+      ShowGamercardDialog(library_view_, kernel_state, xuid);
+    });
+    bind(
+        sub, "Show played titles",
+        [this, kernel_state, xuid] {
+          ShowPlayedTitlesDialog(library_view_, kernel_state, xuid);
+        },
+        online);
+    bind(sub, "Show content directory", [profiles, xuid] {
+      std::error_code ec = {};
+      const auto dir = profiles->GetProfileContentPath(xuid);
+      std::filesystem::create_directories(dir, ec);
+      if (!wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(dir)))) {
+        XELOGE("Library: failed to open profile folder {}",
+               xe::path_to_utf8(dir));
+      }
+    });
+    bind(
+        sub, "Delete profile",
+        [this, profiles, xuid, name] {
+          char xuid_hex[17];
+          std::snprintf(xuid_hex, sizeof(xuid_hex), "%016llX",
+                        (unsigned long long)xuid);
+          const int answer = wxMessageBox(
+              WxLabel("Delete profile " + name + " (XUID " + xuid_hex +
+                      ") and all its saves?"),
+              "Delete profile", wxYES_NO | wxICON_WARNING, library_view_);
+          if (answer == wxYES) {
+            profiles->DeleteProfile(xuid);
+          }
+        },
+        !title_open);
+    menu.AppendSubMenu(
+        sub, WxLabel(name + (online ? " (Slot " + std::to_string(slot + 1) + ")"
+                                    : " (offline)")));
+  }
+  if (!count) {
+    menu.Append(wxID_ANY, "No profiles found")->Enable(false);
+  }
+  bind(&menu, "Create profile", [this, profiles, kernel_state] {
+    std::error_code ec = {};
+    const bool migrate =
+        profiles->GetAccountCount() == 0 &&
+        !std::filesystem::is_empty(library_content_root_, ec) && !ec;
+    ShowCreateProfileDialog(library_view_, kernel_state, migrate);
+  });
+  library_view_->PopupMenu(&menu);
 }
 
 }  // namespace wx_ui
