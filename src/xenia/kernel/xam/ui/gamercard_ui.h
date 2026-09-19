@@ -12,10 +12,199 @@
 
 #include "xenia/kernel/xam/xam_ui.h"
 
+#include <array>
+
 namespace xe {
 namespace kernel {
 namespace xam {
 namespace ui {
+
+// ENUM->NAME tables shared with the wxWidgets port (wx_profile_dialog.cc).
+// nullptr entries are intentional gaps matching the underlying enum values.
+inline constexpr const char* XLanguageName[] = {nullptr,
+                                                "English",
+                                                "Japanese",
+                                                "German",
+                                                "French",
+                                                "Spanish",
+                                                "Italian",
+                                                "Korean",
+                                                "Traditional Chinese",
+                                                "Portuguese",
+                                                "Simplified Chinese",
+                                                "Polish",
+                                                "Russian"};
+
+inline constexpr const char* XOnlineCountry[] = {nullptr,
+                                                 "United Arab Emirates",
+                                                 "Albania",
+                                                 "Armenia",
+                                                 "Argentina",
+                                                 "Austria",
+                                                 "Australia",
+                                                 "Azerbaijan",
+                                                 "Belgium",
+                                                 "Bulgaria",
+                                                 "Bahrain",
+                                                 "Brunei Darussalam",
+                                                 "Bolivia",
+                                                 "Brazil",
+                                                 "Belarus",
+                                                 "Belize",
+                                                 "Canada",
+                                                 nullptr,
+                                                 "Switzerland",
+                                                 "Chile",
+                                                 "China",
+                                                 "Colombia",
+                                                 "Costa Rica",
+                                                 "Czech Republic",
+                                                 "Germany",
+                                                 "Denmark",
+                                                 "Dominican Republic",
+                                                 "Algeria",
+                                                 "Ecuador",
+                                                 "Estonia",
+                                                 "Egypt",
+                                                 "Spain",
+                                                 "Finland",
+                                                 "Faroe Islands",
+                                                 "France",
+                                                 "Great Britain",
+                                                 "Georgia",
+                                                 "Greece",
+                                                 "Guatemala",
+                                                 "Hong Kong",
+                                                 "Honduras",
+                                                 "Croatia",
+                                                 "Hungary",
+                                                 "Indonesia",
+                                                 "Ireland",
+                                                 "Israel",
+                                                 "India",
+                                                 "Iraq",
+                                                 "Iran",
+                                                 "Iceland",
+                                                 "Italy",
+                                                 "Jamaica",
+                                                 "Jordan",
+                                                 "Japan",
+                                                 "Kenya",
+                                                 "Kyrgyzstan",
+                                                 "Korea",
+                                                 "Kuwait",
+                                                 "Kazakhstan",
+                                                 "Lebanon",
+                                                 "Liechtenstein",
+                                                 "Lithuania",
+                                                 "Luxembourg",
+                                                 "Latvia",
+                                                 "Libya",
+                                                 "Morocco",
+                                                 "Monaco",
+                                                 "Macedonia",
+                                                 "Mongolia",
+                                                 "Macau",
+                                                 "Maldives",
+                                                 "Mexico",
+                                                 "Malaysia",
+                                                 "Nicaragua",
+                                                 "Netherlands",
+                                                 "Norway",
+                                                 "New Zealand",
+                                                 "Oman",
+                                                 "Panama",
+                                                 "Peru",
+                                                 "Philippines",
+                                                 "Pakistan",
+                                                 "Poland",
+                                                 "Puerto Rico",
+                                                 "Portugal",
+                                                 "Paraguay",
+                                                 "Qatar",
+                                                 "Romania",
+                                                 "Russian Federation",
+                                                 "Saudi Arabia",
+                                                 "Sweden",
+                                                 "Singapore",
+                                                 "Slovenia",
+                                                 "Slovak Republic",
+                                                 nullptr,
+                                                 "El Salvador",
+                                                 "Syria",
+                                                 "Thailand",
+                                                 "Tunisia",
+                                                 "Turkey",
+                                                 "Trinidad And Tobago",
+                                                 "Taiwan",
+                                                 "Ukraine",
+                                                 "United States",
+                                                 "Uruguay",
+                                                 "Uzbekistan",
+                                                 "Venezuela",
+                                                 "Viet Nam",
+                                                 "Yemen",
+                                                 "South Africa",
+                                                 "Zimbabwe"};
+
+inline constexpr const char* AccountSubscription[] = {
+    "None",  nullptr, nullptr, "Silver", nullptr,
+    nullptr, "Gold",  nullptr, nullptr,  "Family"};
+
+inline constexpr const char* XGamerzoneName[] = {"None", "Recreation", "Pro",
+                                                 "Family", "Underground"};
+
+inline constexpr const char* PreferredColorOptions[] = {
+    "None", "Black",  "White", "Yellow", "Orange", "Pink",
+    "Red",  "Purple", "Blue",  "Green",  "Brown",  "Silver"};
+
+inline constexpr const char* ControllerVibrationOptions[] = {"Off", nullptr,
+                                                             nullptr, "On"};
+
+inline constexpr const char* ControlSensitivityOptions[] = {"Medium", "Low",
+                                                            "High"};
+
+inline constexpr const char* GamerDifficultyOptions[] = {"Normal", "Easy",
+                                                         "Hard"};
+
+inline constexpr const char* AutoAimOptions[] = {"Off", "On"};
+inline constexpr const char* AutoCenterOptions[] = {"Off", "On"};
+inline constexpr const char* MovementControlOptions[] = {"Left Thumbstick",
+                                                         "Right Thumbstick"};
+inline constexpr const char* YAxisInversionOptions[] = {"Off", "On"};
+inline constexpr const char* TransmissionOptions[] = {"Automatic", "Manual"};
+inline constexpr const char* CameraLocationOptions[] = {"Behind", "In Front",
+                                                        "Inside"};
+inline constexpr const char* BrakeControlOptions[] = {"Trigger", "Button"};
+inline constexpr const char* AcceleratorControlOptions[] = {"Trigger",
+                                                            "Button"};
+inline constexpr const char* GamerTypeOptions[] = {"None",
+                                                   nullptr,
+                                                   nullptr,
+                                                   "Xbox 360 Launch Team",
+                                                   "NXE Launch Team",
+                                                   "360 + NXE Launch Team"};
+
+inline constexpr std::array<UserSettingId, 19> UserSettingsToLoad = {
+    UserSettingId::XPROFILE_GAMER_TYPE,
+    UserSettingId::XPROFILE_GAMER_YAXIS_INVERSION,
+    UserSettingId::XPROFILE_OPTION_CONTROLLER_VIBRATION,
+    UserSettingId::XPROFILE_GAMERCARD_ZONE,
+    UserSettingId::XPROFILE_GAMERCARD_REGION,
+    UserSettingId::XPROFILE_GAMER_DIFFICULTY,
+    UserSettingId::XPROFILE_GAMER_CONTROL_SENSITIVITY,
+    UserSettingId::XPROFILE_GAMER_PREFERRED_COLOR_FIRST,
+    UserSettingId::XPROFILE_GAMER_PREFERRED_COLOR_SECOND,
+    UserSettingId::XPROFILE_GAMER_ACTION_AUTO_AIM,
+    UserSettingId::XPROFILE_GAMER_ACTION_AUTO_CENTER,
+    UserSettingId::XPROFILE_GAMER_ACTION_MOVEMENT_CONTROL,
+    UserSettingId::XPROFILE_GAMER_RACE_TRANSMISSION,
+    UserSettingId::XPROFILE_GAMER_RACE_CAMERA_LOCATION,
+    UserSettingId::XPROFILE_GAMER_RACE_BRAKE_CONTROL,
+    UserSettingId::XPROFILE_GAMER_RACE_ACCELERATOR_CONTROL,
+    UserSettingId::XPROFILE_GAMERCARD_USER_NAME,
+    UserSettingId::XPROFILE_GAMERCARD_USER_BIO,
+    UserSettingId::XPROFILE_GAMERCARD_MOTTO};
 
 struct GamercardSettings {
   // Account settings
