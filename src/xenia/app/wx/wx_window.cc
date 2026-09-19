@@ -784,7 +784,9 @@ void WxWindow::NoteGameBooted(size_t index, int disc_number) {
   entry.last_played_disc = disc_number;
   SaveLibraryEntries();
   if (library_view_) {
-    library_view_->RefreshEntry(index);
+    // Push the updated vector: the view owns a copy, so refreshing from it
+    // would keep showing the stale timestamp.
+    library_view_->SetEntries(library_entries_);
   }
 }
 
