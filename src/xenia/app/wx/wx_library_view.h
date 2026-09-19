@@ -49,7 +49,6 @@ class WxLibraryView : public wxPanel {
 
   void SetEntries(std::vector<GameEntry> entries);
   const std::vector<GameEntry>& entries() const { return entries_; }
-  void RefreshEntry(size_t index);
 
  private:
   enum : int {
