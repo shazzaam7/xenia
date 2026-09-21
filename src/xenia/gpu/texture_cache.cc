@@ -17,7 +17,7 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/shared_memory.h"
 
-DEFINE_int32(
+DEFINE_int32_range(
     draw_resolution_scale_x, 1,
     "Integer pixel width scale used for scaling the rendering resolution "
     "opaquely to the game.\n"
@@ -29,28 +29,34 @@ DEFINE_int32(
     "incorrectly as pixels become ambiguous from the game's perspective and "
     "because half-pixel offset (which normally doesn't affect coverage when "
     "MSAA isn't used) becomes full-pixel.",
-    "GPU");
-DEFINE_int32(
+    "GPU", "Resolution scale X", 1, 7);
+DEFINE_int32_range(
     draw_resolution_scale_y, 1,
     "Integer pixel width scale used for scaling the rendering resolution "
     "opaquely to the game.\n"
     "See draw_resolution_scale_x for more information.",
-    "GPU");
+    "GPU", "Resolution scale Y", 1, 7);
 DEFINE_uint32(
     texture_cache_memory_limit_soft, 384,
     "Maximum host texture memory usage (in megabytes) above which old textures "
     "will be destroyed.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(texture_cache_memory_limit_soft,
+                        "Texture cache memory limit (soft)");
 DEFINE_uint32(
     texture_cache_memory_limit_soft_lifetime, 30,
     "Seconds a texture should be unused to be considered old enough to be "
     "deleted if texture memory usage exceeds texture_cache_memory_limit_soft.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(texture_cache_memory_limit_soft_lifetime,
+                        "Texture cache memory limit lifetime");
 DEFINE_uint32(
     texture_cache_memory_limit_hard, 768,
     "Maximum host texture memory usage (in megabytes) above which textures "
     "will be destroyed as soon as possible.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(texture_cache_memory_limit_hard,
+                        "Texture cache memory limit (hard)");
 DEFINE_uint32(
     texture_cache_memory_limit_render_to_texture, 24,
     "Part of the host texture memory budget (in megabytes) that will be scaled "
@@ -61,10 +67,13 @@ DEFINE_uint32(
     "textures - so with 2x2 resolution scaling, the soft limit will be 360 + "
     "96 MB, and with 3x3, it will be 360 + 216 MB.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(texture_cache_memory_limit_render_to_texture,
+                        "Texture cache memory limit (render to texture)");
 DEFINE_bool(tiled_shared_memory, true,
             "Enable tiled/sparse resources for efficient large address space "
             "support. Disable for graphics debugger compatibility.",
             "GPU.Debug");
+DEFINE_CVar_DisplayName(tiled_shared_memory, "Tiled shared memory");
 
 namespace xe {
 namespace gpu {

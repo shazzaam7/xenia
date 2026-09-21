@@ -36,6 +36,8 @@ DEFINE_bool(
     "surface directly instead of requesting the UI thread to do so through the "
     "host window system.",
     "Display");
+DEFINE_CVar_DisplayName(host_present_from_non_ui_thread,
+                        "Present from GPU thread");
 
 DEFINE_bool(
     present_render_pass_clear, true,
@@ -43,12 +45,15 @@ DEFINE_bool(
     "load operation in presentation instead of clear commands clearing only "
     "the letterbox area.",
     "Display");
+DEFINE_CVar_DisplayName(present_render_pass_clear,
+                        "Clear via render pass load");
 
 DEFINE_bool(
     present_letterbox, true,
     "Maintain aspect ratio when stretching by displaying bars around the image "
     "when there's no more overscan area to crop out.",
     "Display");
+DEFINE_CVar_DisplayName(present_letterbox, "Letterbox presentation");
 // https://github.com/MonoGame/MonoGame/issues/4697#issuecomment-217779403
 // Using the value from DirectXTK (5% cropped out from each side, thus 90%),
 // which is not exactly the Xbox One title-safe area, but close, and within the
@@ -57,16 +62,16 @@ DEFINE_bool(
 // XNA TitleSafeArea is 80%, but it's very conservative, designed for CRT, and
 // is the title-safe area rather than the action-safe area.
 // 90% is also exactly the fraction of 16:9 height in 16:10.
-DEFINE_int32(
+DEFINE_int32_range(
     present_safe_area_x, 100,
     "Percentage of the image width that can be kept when presenting to "
     "maintain aspect ratio without letterboxing or stretching.",
-    "Display");
-DEFINE_int32(
+    "Display", "Safe area width", 0, 100);
+DEFINE_int32_range(
     present_safe_area_y, 100,
     "Percentage of the image height that can be kept when presenting to "
     "maintain aspect ratio without letterboxing or stretching.",
-    "Display");
+    "Display", "Safe area height", 0, 100);
 
 namespace xe {
 namespace ui {
