@@ -15,26 +15,29 @@
 #include "xenia/ui/virtual_key.h"
 #include "xenia/ui/window.h"
 
-#define XE_HID_KEYBOARD_BINDING(button, description, cvar_name, \
-                                cvar_default_value)             \
-  DEFINE_string(cvar_name, cvar_default_value,                  \
-                "List of keys to bind to " description          \
-                ", separated by spaces",                        \
-                "HID.Key")
+#define XE_HID_KEYBOARD_BINDING(button, description, cvar_name,        \
+                                cvar_default_value, cvar_display_name) \
+  DEFINE_string(cvar_name, cvar_default_value,                         \
+                "List of keys to bind to " description                 \
+                ", separated by spaces",                               \
+                "HID.Key");                                            \
+  DEFINE_CVar_DisplayName(cvar_name, cvar_display_name)
 #include "keyboard_binding_table.inc"
 #undef XE_HID_KEYBOARD_BINDING
 
-DEFINE_int32(keyboard_mode, 0,
-             "Allows user do specify keyboard working mode. Possible values: 0 "
-             "- Disabled, 1 - Enabled, 2 - Passthrough. Passthrough requires "
-             "controller being connected!",
-             "HID");
+DEFINE_int32_choices(
+    keyboard_mode, 0,
+    "Allows user do specify keyboard working mode. Possible values: 0 "
+    "- Disabled, 1 - Enabled, 2 - Passthrough. Passthrough requires "
+    "controller being connected!",
+    "HID", "Keyboard mode", XE_CVAR_CHOICE("Disabled", "0"),
+    XE_CVAR_CHOICE("Enabled", "1"), XE_CVAR_CHOICE("Passthrough", "2"));
 
-DEFINE_int32(
+DEFINE_int32_range(
     keyboard_user_index, 0,
     "Controller port that keyboard emulates. [0, 3] - Keyboard is assigned to "
     "selected slot. Passthrough does not require assigning slot.",
-    "HID");
+    "HID", "Keyboard user index", 0, 3);
 
 namespace xe {
 namespace hid {
@@ -223,7 +226,7 @@ KeyboardInputDriver::KeyboardInputDriver(xe::ui::Window* window,
                                          size_t window_z_order)
     : InputDriver(window, window_z_order), window_input_listener_(*this) {
 #define XE_HID_KEYBOARD_BINDING(button, description, cvar_name,        \
-                                cvar_default_value)                    \
+                                cvar_default_value, cvar_display_name) \
   ParseKeyBinding(xe::ui::VirtualKey::kXInputPad##button, description, \
                   cvars::cvar_name);
 #include "keyboard_binding_table.inc"

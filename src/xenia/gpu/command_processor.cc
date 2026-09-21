@@ -49,8 +49,9 @@ DEFINE_bool(clear_memory_page_state, false,
             "Refresh state of memory pages to enable gpu written data. (Use "
             "for 'Team Ninja' Games to fix missing character models)",
             "GPU");
+DEFINE_CVar_DisplayName(clear_memory_page_state, "Clear memory page state");
 
-DEFINE_string(
+DEFINE_string_choices(
     occlusion_query, "fast",
     "Controls hardware occlusion query behavior for EVENT_WRITE_ZPD.\n"
     "Used for effects like lens flares, object culling, and auto-exposure.\n"
@@ -64,7 +65,11 @@ DEFINE_string(
     "           visibility, but may be less stable for occlusion culling.\n"
     " strict: Ask the GPU and wait for the real result before continuing.\n"
     "         Most accurate, but may be somewhat less performant.",
-    "GPU");
+    "GPU", "Occlusion query mode",
+    XE_CVAR_CHOICE("Fake (no GPU query)", "fake"),
+    XE_CVAR_CHOICE("Fast (default)", "fast"),
+    XE_CVAR_CHOICE("Fast, alternate (keeps cached zeroes)", "fast-alt"),
+    XE_CVAR_CHOICE("Strict (accurate, slower)", "strict"));
 
 DEFINE_bool(
     occlusion_query_full_counters, false,
@@ -76,14 +81,17 @@ DEFINE_bool(
     "tests in-shader to count everything like Xenos does.",
     "GPU");
 
-DEFINE_string(
+DEFINE_string_choices(
     readback_resolve, "none",
     "Controls CPU readback of render-to-texture resolve results.\n"
     " fast: Read from previous frame (1 frame delay, no GPU stall, slight "
     "performance hit)\n"
     " full: Wait for GPU to finish (accurate but slow, GPU-CPU sync stall)\n"
     " none: Disable readback completely (some games render better without it)",
-    "GPU");
+    "GPU", "Readback resolve mode",
+    XE_CVAR_CHOICE("None (disable readback)", "none"),
+    XE_CVAR_CHOICE("Fast (1 frame delay)", "fast"),
+    XE_CVAR_CHOICE("Full (accurate, slow)", "full"));
 
 UPDATE_from_string(readback_resolve, 2025, 12, 4, 21, "fast");
 
@@ -108,6 +116,7 @@ DEFINE_bool(
     "the GPU, and this flag isn't needed to handle such behavior), but causes "
     "mid-frame synchronization, so it has a huge performance impact.",
     "GPU");
+DEFINE_CVar_DisplayName(readback_memexport, "Readback memexport");
 
 namespace xe {
 namespace gpu {

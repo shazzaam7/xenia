@@ -30,8 +30,9 @@
 
 DECLARE_bool(record_mmio_access_exceptions);
 
-DEFINE_int64(max_stackpoints, 65536,
-             "Max number of host->guest stack mappings we can record.", "x64");
+DEFINE_int64_range(max_stackpoints, 65536,
+                   "Max number of host->guest stack mappings we can record.",
+                   "x64", "Max stack points", 0, 1048576);
 
 DEFINE_bool(enable_host_guest_stack_synchronization, true,
             "Records entries for guest/host stack mappings at function starts "

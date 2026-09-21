@@ -45,23 +45,32 @@
 #if XE_PLATFORM_ANDROID
 DEFINE_bool(log_to_logcat, true, "Write log output to Android Logcat.",
             "Logging");
+DEFINE_CVar_DisplayName(log_to_logcat, "Log to Logcat");
 #else
 DEFINE_path(log_file, "", "Logs are written to the given file", "Logging");
+DEFINE_CVar_PathPicker(log_file, "Log file", false);
 DEFINE_bool(log_to_stdout, true, "Write log output to stdout", "Logging");
+DEFINE_CVar_DisplayName(log_to_stdout, "Log to stdout");
 DEFINE_bool(log_to_debugprint, false, "Dump the log to DebugPrint.", "Logging");
+DEFINE_CVar_DisplayName(log_to_debugprint, "Log to DebugPrint");
 #endif  // XE_PLATFORM_ANDROID
 DEFINE_bool(flush_log, true, "Flush log file after each log line batch.",
             "Logging");
+DEFINE_CVar_DisplayName(flush_log, "Flush log after each batch");
 
-DEFINE_uint32(log_mask, 0,
-              "Disables specific categorizes for more granular debug logging. "
-              "Kernel = 1, Apu = 2, Cpu = 4, Gpu = 8.",
-              "Logging");
+DEFINE_uint32_flags(log_mask, 0,
+                    "Disables specific categorizes for more granular debug "
+                    "logging. Kernel = 1, Apu = 2, Cpu = 4, Gpu = 8.",
+                    "Logging", "Disabled log categories",
+                    XE_CVAR_CHOICE("Kernel", "1"), XE_CVAR_CHOICE("Apu", "2"),
+                    XE_CVAR_CHOICE("Cpu", "4"), XE_CVAR_CHOICE("Gpu", "8"));
 
-DEFINE_int32(
+DEFINE_int32_choices(
     log_level, 2,
     "Maximum level to be logged. (0=error, 1=warning, 2=info, 3=debug)",
-    "Logging");
+    "Logging", "Log level", XE_CVAR_CHOICE("Error", "0"),
+    XE_CVAR_CHOICE("Warning", "1"), XE_CVAR_CHOICE("Info", "2"),
+    XE_CVAR_CHOICE("Debug", "3"));
 
 namespace dp = disruptorplus;
 using namespace xe::literals;

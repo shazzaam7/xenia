@@ -26,15 +26,20 @@
 DEFINE_uint32(custom_internal_display_resolution_x, 0,
               "Custom width. See internal_display_resolution. Range 1-1920.",
               "Video");
+DEFINE_CVar_DisplayName(custom_internal_display_resolution_x,
+                        "Internal display width");
 DEFINE_uint32(custom_internal_display_resolution_y, 0,
               "Custom height. See internal_display_resolution. Range 1-1080.\n",
               "Video");
+DEFINE_CVar_DisplayName(custom_internal_display_resolution_y,
+                        "Internal display height");
 
 DEFINE_bool(
     store_shaders, true,
     "Store shaders persistently and load them when loading games to avoid "
     "runtime spikes and freezes when playing the game not for the first time.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(store_shaders, "Store shaders persistently");
 
 namespace xe {
 namespace gpu {

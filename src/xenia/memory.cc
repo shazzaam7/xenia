@@ -28,6 +28,7 @@
 
 DEFINE_bool(protect_zero, true, "Protect the zero page from reads and writes.",
             "Memory");
+DEFINE_CVar_DisplayName(protect_zero, "Protect zero page");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline MMIO range checks for all I32 loads/stores instead "
             "of relying on exception-based MMIO detection.",
@@ -43,13 +44,16 @@ DEFINE_bool(record_mmio_access_exceptions, true,
             "CPU");
 DEFINE_bool(protect_on_release, false,
             "Protect released memory to prevent accesses.", "Memory");
+DEFINE_CVar_DisplayName(protect_on_release, "Protect released memory");
 DEFINE_bool(scribble_heap, false,
             "Scribble specific or random value into all allocated heap memory.",
             "Memory");
+DEFINE_CVar_DisplayName(scribble_heap, "Scribble heap");
 DEFINE_int32(scribble_heap_value, 0,
              "Value used to fill all allocated heap memory. 0 - Random value. "
              "Valid range: [1-255]",
              "Memory");
+DEFINE_CVar_DisplayName(scribble_heap_value, "Heap scribble value");
 
 namespace xe {
 uint32_t get_page_count(uint32_t value, uint32_t page_size) {

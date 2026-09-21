@@ -36,6 +36,57 @@ std::string EscapeString(const std::string_view str);
 // Track config values that had type mismatches during loading
 extern std::vector<std::string>* config_type_mismatch_warnings;
 
+// Optional, presentation-only metadata for a config variable, consumed by UI
+// editors (currently the config editor dialog). Registered next to the variable
+// definition through the DEFINE_*_choices / DEFINE_*_range /
+// DEFINE_CVar_DisplayName macros; the engine itself never reads it.
+struct ConfigVarEditorInfo {
+  // One entry in a fixed set of allowed values (an enum-like variable). The
+  // label is what the editor shows, the value is what gets written and parsed.
+  struct Choice {
+    const char* label;
+    const char* value;
+  };
+  // Friendly name shown for the setting itself instead of the raw cvar name -
+  // the key written to the config file is unchanged. Null => use the cvar name.
+  const char* display_name = nullptr;
+  // Non-empty => the editor shows a dropdown. The value strings are passed to
+  // SetFromString, so pairs also work for integer variables.
+  std::vector<Choice> choices;
+  // Inclusive numeric slider bounds. When has_range is false the editor falls
+  // back to a plain text field.
+  bool has_range = false;
+  double range_min = 0.0;
+  double range_max = 0.0;
+  // Granularity of the slider / spin box; 0 means an integer step of 1.
+  double range_step = 0.0;
+  // Bit-flag variable: the editor shows one checkbox per Choice and writes the
+  // bitwise OR of the checked values, so each Choice::value holds the numeric
+  // value of a single bit ("1", "2", "4", ...).
+  bool is_flags = false;
+  // Dropdown contents computed at runtime (GPU adapters, devices) instead of
+  // registered statically. Called on the UI thread while the editor is being
+  // built; the returned list must stay alive for the process lifetime.
+  // Returning an empty list makes the editor fall back to a text field.
+  const std::vector<Choice>& (*dynamic_choices)() = nullptr;
+  // For path variables: show a browse button next to the text field, opening
+  // the directory chooser when set instead of the file chooser.
+  bool path_is_directory = false;
+};
+
+// Value type tag for editors, consumed through IConfigVar::value_kind().
+// An enum rather than a string so dispatch sites are compile-time checked.
+enum class ConfigVarValueKind {
+  kBool,
+  kInt32,
+  kInt64,
+  kUint32,
+  kUint64,
+  kDouble,
+  kString,
+  kPath,
+};
+
 class ICommandVar {
  public:
   virtual ~ICommandVar() = default;
@@ -50,6 +101,20 @@ class IConfigVar : virtual public ICommandVar {
  public:
   virtual const std::string& category() const = 0;
   virtual bool is_transient() const = 0;
+  // Optional editor metadata (dropdown contents and/or slider bounds); null
+  // when the variable has no special presentation needs.
+  virtual const ConfigVarEditorInfo* editor_info() const { return nullptr; }
+  // Exact value type tag for editors. Enum, not a string: typo-proof at
+  // compile time, and switch statements over it are exhaustiveness-checked.
+  virtual ConfigVarValueKind value_kind() const = 0;
+  // Current file value (config override or default) as raw text for editing -
+  // unlike config_value() this is never TOML-escaped.
+  virtual std::string display_value() const = 0;
+  // Parses editor text into the config override and applies it live. Numerics
+  // must be pre-validated by the caller (garbage hits assert_always inside
+  // from_string and degrades to T()). Returns false only for string/path
+  // conversion failures (never for the types used today).
+  virtual bool SetFromString(const std::string& text) = 0;
   virtual std::string config_value() const = 0;
   virtual void LoadConfigValue(const toml::node* result) = 0;
   virtual void LoadGameConfigValue(const toml::node* result) = 0;
@@ -89,6 +154,16 @@ class ConfigVar : public CommandVar<T>, virtual public IConfigVar {
   const T& GetTypedConfigValue() const;
   const std::string& category() const override;
   bool is_transient() const override;
+  const ConfigVarEditorInfo* editor_info() const override {
+    return editor_info_;
+  }
+  // Presentation-only; set by the DEFINE_*_choices / DEFINE_*_range macros.
+  void set_editor_info(const ConfigVarEditorInfo* editor_info) {
+    editor_info_ = editor_info;
+  }
+  ConfigVarValueKind value_kind() const override;
+  std::string display_value() const override;
+  bool SetFromString(const std::string& text) override;
   void AddToLaunchOptions(cxxopts::Options* options) override;
   void LoadConfigValue(const toml::node* result) override;
   void LoadGameConfigValue(const toml::node* result) override;
@@ -102,6 +177,7 @@ class ConfigVar : public CommandVar<T>, virtual public IConfigVar {
  private:
   std::string category_;
   bool is_transient_;
+  const ConfigVarEditorInfo* editor_info_ = nullptr;
   std::unique_ptr<T> config_value_ = nullptr;
   std::unique_ptr<T> game_config_value_ = nullptr;
   void UpdateValue() override;
@@ -264,6 +340,72 @@ template <class T>
 void CommandVar<T>::SetValue(T val) {
   *current_value_ = val;
 }
+template <typename T>
+struct ConfigVarKind;  // Intentionally undefined: unsupported T fails loudly.
+template <>
+struct ConfigVarKind<bool> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kBool;
+};
+template <>
+struct ConfigVarKind<int32_t> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kInt32;
+};
+template <>
+struct ConfigVarKind<int64_t> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kInt64;
+};
+template <>
+struct ConfigVarKind<uint32_t> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kUint32;
+};
+template <>
+struct ConfigVarKind<uint64_t> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kUint64;
+};
+template <>
+struct ConfigVarKind<double> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kDouble;
+};
+template <>
+struct ConfigVarKind<std::string> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kString;
+};
+template <>
+struct ConfigVarKind<std::filesystem::path> {
+  static constexpr ConfigVarValueKind value = ConfigVarValueKind::kPath;
+};
+template <class T>
+ConfigVarValueKind ConfigVar<T>::value_kind() const {
+  return ConfigVarKind<T>::value;
+}
+template <class T>
+std::string ConfigVar<T>::display_value() const {
+  return this->ToString(GetTypedConfigValue());
+}
+template <>
+inline std::string ConfigVar<std::string>::display_value() const {
+  return GetTypedConfigValue();
+}
+template <>
+inline std::string ConfigVar<std::filesystem::path>::display_value() const {
+  return xe::path_to_utf8(GetTypedConfigValue());
+}
+template <class T>
+bool ConfigVar<T>::SetFromString(const std::string& text) {
+  SetConfigValue(this->Convert(text));
+  return true;
+}
+template <>
+inline bool ConfigVar<std::string>::SetFromString(const std::string& text) {
+  SetConfigValue(text);
+  return true;
+}
+template <>
+inline bool ConfigVar<std::filesystem::path>::SetFromString(
+    const std::string& text) {
+  SetConfigValue(xe::to_path(text));
+  return true;
+}
 template <class T>
 const std::string& ConfigVar<T>::category() const {
   return category_;
@@ -354,6 +496,20 @@ ICommandVar* define_cmdvar(const char* name, T* default_value,
   return cmdvar;
 }
 
+// Attaches ConfigVarEditorInfo to the concrete variable. The macros below can't
+// reach it through IConfigVar (it's a virtual base and the setter is not on the
+// interface), hence the dynamic_cast. The macro-generated static object runs
+// after the cv_##name pointer it references, in declaration order within the
+// TU.
+template <typename T>
+class ConfigVarEditorInfoAttacher {
+ public:
+  ConfigVarEditorInfoAttacher(IConfigVar* const& config_var,
+                              const ConfigVarEditorInfo* editor_info) {
+    dynamic_cast<ConfigVar<T>*>(config_var)->set_editor_info(editor_info);
+  }
+};
+
 #define DEFINE_bool(name, default_value, description, category) \
   DEFINE_CVar(name, default_value, description, category, false, bool)
 
@@ -376,6 +532,153 @@ ICommandVar* define_cmdvar(const char* name, T* default_value,
 #define DEFINE_path(name, default_value, description, category)  \
   DEFINE_CVar(name, default_value, description, category, false, \
               std::filesystem::path)
+
+// One label/value pair for DEFINE_*_choices; may be repeated as arguments.
+#define XE_CVAR_CHOICE(label, value) \
+  cvar::ConfigVarEditorInfo::Choice { label, value }
+
+// Friendly name for a setting row, shown instead of the raw cvar name (the key
+// written to the config file is unchanged). Use this for variables that don't
+// already carry metadata; variables with choices / a range take the friendly
+// name as an argument to those macros instead, since only one info object can
+// be attached.
+#define DEFINE_CVar_DisplayName(name, display_name)                     \
+  namespace cv {                                                        \
+  static const cvar::ConfigVarEditorInfo display_info_##name = {        \
+      display_name, {}, false, 0.0, 0.0, 0.0};                          \
+  static const cvar::ConfigVarEditorInfoAttacher<decltype(cvars::name)> \
+      attach_display_info_##name(cv_##name, &display_info_##name);      \
+  }
+
+// Enum-like variable: the editor shows a dropdown of label/value pairs instead
+// of a free-form text field. String values are written verbatim; integer values
+// are parsed by SetFromString, so DEFINE_int32_choices accepts numeric strings.
+#define DEFINE_string_choices(name, default_value, description, category,     \
+                              display_name, ...)                              \
+  DEFINE_CVar(name, default_value, description, category, false, std::string) \
+      DEFINE_CVar_CHOICES(std::string, name, display_name, __VA_ARGS__)
+#define DEFINE_int32_choices(name, default_value, description, category,  \
+                             display_name, ...)                           \
+  DEFINE_CVar(name, default_value, description, category, false, int32_t) \
+      DEFINE_CVar_CHOICES(int32_t, name, display_name, __VA_ARGS__)
+
+// Numeric variable with a known, inclusive range: the editor shows a slider
+// paired with a spin box instead of a text field. min_value / max_value must
+// fit in an int (slider positions), and step_value > 0 for doubles.
+#define DEFINE_int32_range(name, default_value, description, category,     \
+                           display_name, min_value, max_value)             \
+  DEFINE_CVar(name, default_value, description, category, false, int32_t)  \
+      DEFINE_CVar_RANGE(int32_t, name, display_name, min_value, max_value, \
+                        0.0)
+#define DEFINE_uint32_range(name, default_value, description, category,     \
+                            display_name, min_value, max_value)             \
+  DEFINE_CVar(name, default_value, description, category, false, uint32_t)  \
+      DEFINE_CVar_RANGE(uint32_t, name, display_name, min_value, max_value, \
+                        0.0)
+#define DEFINE_double_range(name, default_value, description, category,     \
+                            display_name, min_value, max_value, step_value) \
+  DEFINE_CVar(name, default_value, description, category, false, double)    \
+      DEFINE_CVar_RANGE(double, name, display_name, min_value, max_value,   \
+                        step_value)
+
+// Remaining numeric types with the same slider treatment. The range is stored
+// as doubles, so keep the bounds inside the range an int can address - the
+// slider itself only has int positions.
+#define DEFINE_uint64_range(name, default_value, description, category,     \
+                            display_name, min_value, max_value)             \
+  DEFINE_CVar(name, default_value, description, category, false, uint64_t)  \
+      DEFINE_CVar_RANGE(uint64_t, name, display_name, min_value, max_value, \
+                        0.0)
+#define DEFINE_int64_range(name, default_value, description, category,     \
+                           display_name, min_value, max_value)             \
+  DEFINE_CVar(name, default_value, description, category, false, int64_t)  \
+      DEFINE_CVar_RANGE(int64_t, name, display_name, min_value, max_value, \
+                        0.0)
+
+// Same as DEFINE_int32_choices for the other integer types.
+#define DEFINE_uint32_choices(name, default_value, description, category,  \
+                              display_name, ...)                           \
+  DEFINE_CVar(name, default_value, description, category, false, uint32_t) \
+      DEFINE_CVar_CHOICES(uint32_t, name, display_name, __VA_ARGS__)
+#define DEFINE_int64_choices(name, default_value, description, category,  \
+                             display_name, ...)                           \
+  DEFINE_CVar(name, default_value, description, category, false, int64_t) \
+      DEFINE_CVar_CHOICES(int64_t, name, display_name, __VA_ARGS__)
+#define DEFINE_uint64_choices(name, default_value, description, category,  \
+                              display_name, ...)                           \
+  DEFINE_CVar(name, default_value, description, category, false, uint64_t) \
+      DEFINE_CVar_CHOICES(uint64_t, name, display_name, __VA_ARGS__)
+
+// Bit-flag variable (a mask). The editor shows one checkbox per choice and
+// writes the bitwise OR of the checked ones, so each choice's value must be
+// the numeric value of that single bit. This is for sets that combine, unlike
+// DEFINE_*_choices where only one value can be selected at a time.
+#define DEFINE_int32_flags(name, default_value, description, category,    \
+                           display_name, ...)                             \
+  DEFINE_CVar(name, default_value, description, category, false, int32_t) \
+      DEFINE_CVar_FLAGS(int32_t, name, display_name, __VA_ARGS__)
+#define DEFINE_uint32_flags(name, default_value, description, category,    \
+                            display_name, ...)                             \
+  DEFINE_CVar(name, default_value, description, category, false, uint32_t) \
+      DEFINE_CVar_FLAGS(uint32_t, name, display_name, __VA_ARGS__)
+#define DEFINE_int64_flags(name, default_value, description, category,    \
+                           display_name, ...)                             \
+  DEFINE_CVar(name, default_value, description, category, false, int64_t) \
+      DEFINE_CVar_FLAGS(int64_t, name, display_name, __VA_ARGS__)
+#define DEFINE_uint64_flags(name, default_value, description, category,    \
+                            display_name, ...)                             \
+  DEFINE_CVar(name, default_value, description, category, false, uint64_t) \
+      DEFINE_CVar_FLAGS(uint64_t, name, display_name, __VA_ARGS__)
+
+// Integer variable whose dropdown contents are produced by a function at
+// runtime rather than registered statically - used for GPU adapters and
+// devices, which depend on the machine. provider is a function returning
+// `const std::vector<cvar::ConfigVarEditorInfo::Choice>&` whose result must
+// outlive the call (typically a lazily created, never destroyed singleton).
+#define DEFINE_int32_dynamic_choices(name, default_value, description,    \
+                                     category, display_name, provider)    \
+  DEFINE_CVar(name, default_value, description, category, false, int32_t) \
+      DEFINE_CVar_DYNAMIC_CHOICES(int32_t, name, display_name, provider)
+
+// Gives a DEFINE_path variable a browse button in the editor. is_directory
+// selects between the directory and the file chooser.
+#define DEFINE_CVar_PathPicker(name, display_name, is_directory)             \
+  namespace cv {                                                             \
+  static const cvar::ConfigVarEditorInfo path_info_##name = {                \
+      display_name, {}, false, 0.0, 0.0, 0.0, false, nullptr, is_directory}; \
+  static const cvar::ConfigVarEditorInfoAttacher<decltype(cvars::name)>      \
+      attach_path_info_##name(cv_##name, &path_info_##name);                 \
+  }
+
+#define DEFINE_CVar_CHOICES(type, name, display_name, ...)       \
+  namespace cv {                                                 \
+  static const cvar::ConfigVarEditorInfo editor_info_##name = {  \
+      display_name, {__VA_ARGS__}, false, 0.0, 0.0, 0.0};        \
+  static const cvar::ConfigVarEditorInfoAttacher<type>           \
+      attach_editor_info_##name(cv_##name, &editor_info_##name); \
+  }
+#define DEFINE_CVar_RANGE(type, name, display_name, min_value, max_value, \
+                          step_value)                                     \
+  namespace cv {                                                          \
+  static const cvar::ConfigVarEditorInfo editor_info_##name = {           \
+      display_name, {}, true, min_value, max_value, step_value};          \
+  static const cvar::ConfigVarEditorInfoAttacher<type>                    \
+      attach_editor_info_##name(cv_##name, &editor_info_##name);          \
+  }
+#define DEFINE_CVar_FLAGS(type, name, display_name, ...)         \
+  namespace cv {                                                 \
+  static const cvar::ConfigVarEditorInfo editor_info_##name = {  \
+      display_name, {__VA_ARGS__}, false, 0.0, 0.0, 0.0, true};  \
+  static const cvar::ConfigVarEditorInfoAttacher<type>           \
+      attach_editor_info_##name(cv_##name, &editor_info_##name); \
+  }
+#define DEFINE_CVar_DYNAMIC_CHOICES(type, name, display_name, provider) \
+  namespace cv {                                                        \
+  static const cvar::ConfigVarEditorInfo editor_info_##name = {         \
+      display_name, {}, false, 0.0, 0.0, 0.0, false, provider};         \
+  static const cvar::ConfigVarEditorInfoAttacher<type>                  \
+      attach_editor_info_##name(cv_##name, &editor_info_##name);        \
+  }
 
 #define DEFINE_transient_bool(name, default_value, description, category) \
   DEFINE_CVar(name, default_value, description, category, true, bool)

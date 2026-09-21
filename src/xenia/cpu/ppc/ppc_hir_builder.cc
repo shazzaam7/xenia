@@ -33,6 +33,8 @@ DEFINE_bool(
     "Break to the host debugger (or crash if no debugger attached) if an "
     "unimplemented PowerPC instruction is encountered.",
     "CPU");
+DEFINE_CVar_DisplayName(break_on_unimplemented_instructions,
+                        "Break on unimplemented instructions");
 
 namespace xe {
 namespace cpu {

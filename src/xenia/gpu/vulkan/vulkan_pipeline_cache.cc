@@ -52,13 +52,13 @@ namespace shaders {
 #include "xenia/gpu/shaders/bytecode/vulkan_spirv/placeholder_ps.h"
 }  // namespace shaders
 
-DEFINE_int32(
+DEFINE_int32_range(
     vulkan_pipeline_creation_threads, -1,
     "Number of threads used for graphics pipeline creation. -1 to calculate "
     "automatically (75% of logical CPU cores), a positive number to specify "
     "the number of threads explicitly (up to the number of logical CPU cores), "
     "0 to disable multithreaded pipeline creation.",
-    "Vulkan");
+    "Vulkan", "Pipeline creation threads", -1, 64);
 
 DECLARE_bool(spirv_disable_rounding_mode_rte);
 

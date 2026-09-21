@@ -56,7 +56,7 @@ DEFINE_bool(
 // and insertions require global critical region locking, and insertions also
 // require protecting pages. At 1024, the cache only made the performance worse
 // (415607D4, 16-bit primitive reset index replacement).
-DEFINE_int32(
+DEFINE_int32_range(
     primitive_processor_cache_min_indices, 4096,
     "Smallest number of guest indices to store in the cache to try reusing "
     "later in the same frame if processing (such as primitive type conversion "
@@ -64,7 +64,7 @@ DEFINE_int32(
     "Setting this to a very high value may result in excessive CPU processing, "
     "while a very low value may result in excessive locking and lookups.\n"
     "Negative values disable caching.",
-    "GPU.Debug");
+    "GPU.Debug", "Primitive cache min indices", -1, 65536);
 
 namespace xe {
 namespace gpu {

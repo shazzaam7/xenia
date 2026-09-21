@@ -16,14 +16,17 @@
 #define XBYAK_NO_OP_NAMES
 #include "third_party/xbyak_aarch64/xbyak_aarch64/xbyak_aarch64.h"
 #include "third_party/xbyak_aarch64/xbyak_aarch64/xbyak_aarch64_util.h"
-DEFINE_int64(a64_extension_mask, -1LL,
-             "Allow the detection and utilization of specific instruction set "
-             "features.\n"
-             "    0 = armv8.0\n"
-             "    1 = Large System Extensions(LSE) atomic operations\n"
-             "    2 = FPCR.FZ flushes denormal inputs (skip software flush)\n"
-             "   -1 = Detect and utilize all possible processor features\n",
-             "a64");
+DEFINE_int64_flags(
+    a64_extension_mask, -1LL,
+    "Allow the detection and utilization of specific instruction set "
+    "features.\n"
+    "    0 = armv8.0\n"
+    "    1 = Large System Extensions(LSE) atomic operations\n"
+    "    2 = FPCR.FZ flushes denormal inputs (skip software flush)\n"
+    "   -1 = Detect and utilize all possible processor features\n",
+    "a64", "Host CPU feature mask",
+    XE_CVAR_CHOICE("Large System Extensions (LSE)", "1"),
+    XE_CVAR_CHOICE("FPCR.FZ flushes denormals", "2"));
 namespace xe {
 namespace arm64 {
 static uint64_t g_feature_flags = 0U;

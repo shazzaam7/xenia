@@ -16,6 +16,7 @@
 
 DEFINE_bool(apply_patches, true, "Enables custom patching functionality",
             "General");
+DEFINE_CVar_DisplayName(apply_patches, "Apply patches");
 
 namespace xe {
 namespace patcher {

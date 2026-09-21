@@ -19,6 +19,7 @@ DEFINE_bool(
     "Plugin are homebrew xex modules which can be used for making mods. "
     "This feature is experimental.",
     "General");
+DEFINE_CVar_DisplayName(allow_plugins, "Allow plugins");
 
 namespace xe {
 namespace patcher {

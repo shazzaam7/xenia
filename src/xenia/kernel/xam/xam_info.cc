@@ -34,21 +34,31 @@
 #include "third_party/fmt/include/fmt/format.h"
 #include "third_party/fmt/include/fmt/xchar.h"
 
-DEFINE_int32(avpack, 8,
-             "Video modes\n"
-             " 0 = PAL-60 Component (SD)\n"
-             " 1 = Unused\n"
-             " 2 = PAL-60 SCART\n"
-             " 3 = 480p Component (HD)\n"
-             " 4 = HDMI+A\n"
-             " 5 = PAL-60 Composite/S-Video\n"
-             " 6 = VGA\n"
-             " 7 = TV PAL-60\n"
-             " 8 = HDMI (default)",
-             "Video");
+DEFINE_int32_choices(avpack, 8,
+                     "Video modes\n"
+                     " 0 = PAL-60 Component (SD)\n"
+                     " 1 = Unused\n"
+                     " 2 = PAL-60 SCART\n"
+                     " 3 = 480p Component (HD)\n"
+                     " 4 = HDMI+A\n"
+                     " 5 = PAL-60 Composite/S-Video\n"
+                     " 6 = VGA\n"
+                     " 7 = TV PAL-60\n"
+                     " 8 = HDMI (default)",
+                     "Video", "AV pack",
+                     XE_CVAR_CHOICE("0 - PAL-60 Component (SD)", "0"),
+                     XE_CVAR_CHOICE("1 - Unused", "1"),
+                     XE_CVAR_CHOICE("2 - PAL-60 SCART", "2"),
+                     XE_CVAR_CHOICE("3 - 480p Component (HD)", "3"),
+                     XE_CVAR_CHOICE("4 - HDMI+A", "4"),
+                     XE_CVAR_CHOICE("5 - PAL-60 Composite/S-Video", "5"),
+                     XE_CVAR_CHOICE("6 - VGA", "6"),
+                     XE_CVAR_CHOICE("7 - TV PAL-60", "7"),
+                     XE_CVAR_CHOICE("8 - HDMI", "8"));
 DEFINE_bool(staging_mode, 0,
             "Enables preview mode in dashboards to render debug information.",
             "Kernel");
+DEFINE_CVar_DisplayName(staging_mode, "Staging (preview) mode");
 
 namespace xe {
 namespace kernel {

@@ -37,7 +37,9 @@
 
 DEFINE_path(target_trace_file, "", "Specifies the trace file to load.",
             "GPU.Debug");
+DEFINE_CVar_PathPicker(target_trace_file, "Trace file to load", false);
 DEFINE_path(trace_dump_path, "", "Output path for dumped files.", "GPU.Debug");
+DEFINE_CVar_PathPicker(trace_dump_path, "Trace dump output path", true);
 
 namespace xe {
 namespace gpu {

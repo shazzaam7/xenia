@@ -17,6 +17,8 @@ DEFINE_bool(allow_mic_initialization, false,
             "Enable Mic Initialization\n"
             " Only set true when testing mic related functions",
             "Kernel");
+DEFINE_CVar_DisplayName(allow_mic_initialization,
+                        "Allow microphone initialization");
 
 namespace xe {
 namespace kernel {

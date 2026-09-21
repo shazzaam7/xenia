@@ -78,6 +78,7 @@ DEFINE_bool(
     "interlock / rasterizer-ordered view), this is ignored, and rounding to "
     "the nearest even is always done.",
     "GPU");
+DEFINE_CVar_DisplayName(depth_float24_round, "Round float24 depth");
 // With MSAA, when converting the depth in pixel shaders, they must run at
 // sample frequency - otherwise, if the depth is the same for the entire pixel,
 // intersections of polygons cannot be antialiased.
@@ -144,13 +145,17 @@ DEFINE_bool(
     "interlock / rasterizer-ordered view), this is ignored because 24-bit "
     "depth is always used directly.",
     "GPU");
+DEFINE_CVar_DisplayName(depth_float24_convert_in_pixel_shader,
+                        "Convert float24 depth in pixel shader");
 DEFINE_bool(
     draw_resolution_scaled_texture_offsets, true,
     "Apply offsets from texture fetch instructions taking resolution scale "
     "into account for render-to-texture, for more correct shadow filtering, "
     "bloom, etc., in some cases.",
     "GPU");
-DEFINE_uint32(
+DEFINE_CVar_DisplayName(draw_resolution_scaled_texture_offsets,
+                        "Scaled texture fetch offsets");
+DEFINE_uint32_range(
     draw_resolution_scale_threshold, 0,
     "Surface pitch in pixels at or below render targets skip being upscaled "
     "by draw_resolution_scale_x/y. 0 disables it.\n"
@@ -159,7 +164,7 @@ DEFINE_uint32(
     "is compared after alignment to 80 pixel EDRAM tiles, so prefer "
     "conservative values, only as high as the broken effects need.\n"
     "Host render targets only.",
-    "GPU");
+    "GPU", "Draw resolution scale threshold", 0, 4096);
 DEFINE_bool(
     gamma_render_target_as_unorm16, true,
     "When the host can't write 8 bits per component pixels with piecewise "
@@ -187,12 +192,16 @@ DEFINE_bool(
     "testing, in this case, much more expensive drawing of 8 quads will be "
     "done.",
     "GPU");
+DEFINE_CVar_DisplayName(native_stencil_value_output,
+                        "Native stencil value output");
 DEFINE_bool(
     snorm16_render_target_full_range, true,
     "When the host can only support 16_16 and 16_16_16_16 render targets as "
     "-1...1, remap -32...32 to -1...1 to use the full possible range of "
     "values, at the expense of multiplicative blending correctness.",
     "GPU.Debug");
+DEFINE_CVar_DisplayName(snorm16_render_target_full_range,
+                        "Full-range snorm16 targets");
 // Enabled by default as the GPU is overall usually the bottleneck when the
 // pixel shader interlock render backend implementation is used, anything that
 // may improve GPU performance is favorable.

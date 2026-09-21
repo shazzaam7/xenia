@@ -11,3 +11,4 @@
 
 DEFINE_bool(guide_button, true, "Forward guide button presses to guest.",
             "HID");
+DEFINE_CVar_DisplayName(guide_button, "Forward guide button");

@@ -20,6 +20,7 @@
 
 DEFINE_bool(debug_symbol_loader, false,
             "Enable dbghelp debug logging and validation.", "CPU");
+DEFINE_CVar_DisplayName(debug_symbol_loader, "Debug symbol loader logging");
 
 // Must be included after platform_win.h:
 #pragma warning(push)

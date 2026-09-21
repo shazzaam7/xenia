@@ -21,11 +21,13 @@
 DECLARE_bool(debug);
 
 DEFINE_bool(force_mount_devkit, false, "Force devkit mount", "Storage");
+DEFINE_CVar_DisplayName(force_mount_devkit, "Force devkit mount");
 
-DEFINE_int32(
+DEFINE_int32_choices(
     console_type, -1,
     "Console Type Identifier: -1 - Retail, 0 - Development Kit, 1 - Test Kit",
-    "Kernel");
+    "Kernel", "Console type", XE_CVAR_CHOICE("Retail", "-1"),
+    XE_CVAR_CHOICE("Development Kit", "0"), XE_CVAR_CHOICE("Test Kit", "1"));
 
 namespace xe {
 namespace kernel {
