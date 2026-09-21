@@ -702,13 +702,15 @@ void WxWindowedAppContext::PlatformQuitFromUIThread() {
 }
 
 void WxWindow::AttachLibrary(
-    LibraryBootCallback on_boot, const std::filesystem::path& storage_root,
+    LibraryBootCallback on_boot, LibraryGameConfigCallback on_game_config,
+    const std::filesystem::path& storage_root,
     const std::filesystem::path& content_root,
     std::function<kernel::KernelState*()> kernel_state) {
   if (library_view_ || !frame_ || !view_) {
     return;
   }
   library_on_boot_ = std::move(on_boot);
+  library_on_game_config_ = std::move(on_game_config);
   library_storage_root_ = storage_root;
   library_content_root_ = content_root;
   kernel_state_ = std::move(kernel_state);
@@ -1038,6 +1040,14 @@ void WxWindow::OnViewContent(size_t index) {
   }
   ShowGameContentDialog(library_view_, kernel_state, library_content_root_,
                         title_id, entry->name);
+}
+
+void WxWindow::OnGameConfig(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->title_id.empty() || !library_on_game_config_) {
+    return;
+  }
+  library_on_game_config_(entry->title_id, entry->name);
 }
 
 void WxWindow::OnShowInFolder(size_t index) {
