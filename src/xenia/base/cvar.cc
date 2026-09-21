@@ -8,6 +8,7 @@
  */
 
 #include "xenia/base/cvar.h"
+#include <charconv>
 #include <iostream>
 // https://github.com/nemtrif/utfcpp/issues/85
 #if defined(_MSVC_LANG) && _MSVC_LANG > __cplusplus
@@ -25,6 +26,62 @@ namespace utfcpp = utf8;
 using u8_citer = utfcpp::iterator<std::string_view::const_iterator>;
 
 namespace cvar {
+
+namespace {
+
+// Strict full-consumption parse; from_string silently truncates ("12ab" -> 12)
+// so validation here must be stricter than parsing.
+template <typename T>
+bool ValidNumber(std::string_view text, bool is_signed) {
+  if (!text.empty() && text.front() == '-') {
+    if (!is_signed) {
+      return false;
+    }
+    text.remove_prefix(1);
+  }
+  int base = 10;
+  if (text.size() > 2 && text.front() == '0' &&
+      (text[1] == 'x' || text[1] == 'X')) {
+    base = 16;
+    text.remove_prefix(2);
+  }
+  if (text.empty()) {
+    return false;
+  }
+  T value = 0;
+  const auto [ptr, ec] =
+      std::from_chars(text.data(), text.data() + text.size(), value, base);
+  return ec == std::errc() && ptr == text.data() + text.size();
+}
+
+}  // namespace
+
+bool IsValidConfigValueText(ConfigVarValueKind kind, std::string_view text) {
+  switch (kind) {
+    case ConfigVarValueKind::kInt32:
+      return ValidNumber<int32_t>(text, true);
+    case ConfigVarValueKind::kInt64:
+      return ValidNumber<int64_t>(text, true);
+    case ConfigVarValueKind::kUint32:
+      return ValidNumber<uint32_t>(text, false);
+    case ConfigVarValueKind::kUint64:
+      return ValidNumber<uint64_t>(text, false);
+    case ConfigVarValueKind::kDouble: {
+      if (text.empty()) {
+        return false;
+      }
+      double value = 0;
+      const auto [ptr, ec] =
+          std::from_chars(text.data(), text.data() + text.size(), value);
+      return ec == std::errc() && ptr == text.data() + text.size();
+    }
+    case ConfigVarValueKind::kBool:
+    case ConfigVarValueKind::kString:
+    case ConfigVarValueKind::kPath:
+      return true;
+  }
+  return true;
+}
 
 cxxopts::Options options("xenia", "Xbox 360 Emulator");
 std::map<std::string, ICommandVar*>* CmdVars;
