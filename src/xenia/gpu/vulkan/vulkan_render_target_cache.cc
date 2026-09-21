@@ -30,7 +30,7 @@
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
-DEFINE_string(
+DEFINE_string_choices(
     render_target_path_vulkan, "",
     "Render target emulation path to use on Vulkan.\n"
     "Use: [any, fbo, fsi]\n"
@@ -49,7 +49,9 @@ DEFINE_string(
     " Any other value:\n"
     "  Choose what is considered the most optimal for the system (currently "
     "always FB because the FSI path is much slower now).",
-    "GPU");
+    "GPU", "Render target path (Vulkan)", XE_CVAR_CHOICE("Automatic", ""),
+    XE_CVAR_CHOICE("FBO (host framebuffers)", "fbo"),
+    XE_CVAR_CHOICE("FSI (fragment shader interlock)", "fsi"));
 
 namespace xe {
 namespace gpu {

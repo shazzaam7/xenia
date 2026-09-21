@@ -10,6 +10,8 @@
 #include "xenia/ui/d3d12/d3d12_provider.h"
 
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
@@ -19,20 +21,68 @@
 #include "xenia/ui/d3d12/d3d12_util.h"
 DEFINE_bool(d3d12_debug, false, "Enable Direct3D 12 and DXGI debug layer.",
             "D3D12");
+DEFINE_CVar_DisplayName(d3d12_debug, "Direct3D 12 debug layer");
 DEFINE_bool(d3d12_break_on_error, false,
             "Break on Direct3D 12 validation errors.", "D3D12");
 DEFINE_bool(d3d12_break_on_warning, false,
             "Break on Direct3D 12 validation warnings.", "D3D12");
-DEFINE_int32(d3d12_adapter, -1,
-             "Index of the DXGI adapter to use. "
-             "-1 for any physical adapter, -2 for WARP software rendering.",
-             "D3D12");
-DEFINE_int32(
+namespace {
+
+// Dropdown contents for the config editor, enumerating the adapters that are
+// actually present. Built on first use and intentionally never destroyed - the
+// editor keeps references into the strings. dxgi is linked by xenia-ui, so the
+// factory can be created directly.
+const std::vector<cvar::ConfigVarEditorInfo::Choice>& D3D12AdapterChoices() {
+  static const std::vector<cvar::ConfigVarEditorInfo::Choice>* choices = [] {
+    auto* labels = new std::vector<std::string>();
+    auto* values = new std::vector<std::string>();
+    labels->push_back("Any physical adapter");
+    values->push_back("-1");
+    labels->push_back("Software (WARP)");
+    values->push_back("-2");
+    IDXGIFactory1* factory = nullptr;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) && factory) {
+      IDXGIAdapter1* adapter = nullptr;
+      for (UINT index = 0; factory->EnumAdapters1(index, &adapter) == S_OK;
+           ++index) {
+        DXGI_ADAPTER_DESC1 adapter_description = {};
+        if (SUCCEEDED(adapter->GetDesc1(&adapter_description))) {
+          // DXGI names are UTF-16, which is wchar_t on Windows only.
+          labels->push_back(fmt::format(
+              "{}: {}", index,
+              xe::to_utf8(std::u16string_view(reinterpret_cast<const char16_t*>(
+                  adapter_description.Description)))));
+          values->push_back(std::to_string(index));
+        }
+        adapter->Release();
+        adapter = nullptr;
+      }
+      factory->Release();
+    }
+    auto* result = new std::vector<cvar::ConfigVarEditorInfo::Choice>();
+    result->reserve(labels->size());
+    for (size_t i = 0; i < labels->size(); ++i) {
+      result->push_back({(*labels)[i].c_str(), (*values)[i].c_str()});
+    }
+    return result;
+  }();
+  return *choices;
+}
+
+}  // namespace
+
+DEFINE_int32_dynamic_choices(
+    d3d12_adapter, -1,
+    "Index of the DXGI adapter to use. "
+    "-1 for any physical adapter, -2 for WARP software rendering.",
+    "D3D12", "GPU adapter", &D3D12AdapterChoices);
+DEFINE_int32_choices(
     d3d12_queue_priority, 1,
     "Graphics (direct) command queue scheduling priority, 0 - normal, 1 - "
     "high, 2 - global realtime (requires administrator privileges, may impact "
     "system responsibility)",
-    "D3D12");
+    "D3D12", "D3D12 queue priority", XE_CVAR_CHOICE("Normal", "0"),
+    XE_CVAR_CHOICE("High", "1"), XE_CVAR_CHOICE("Global realtime", "2"));
 
 namespace xe {
 namespace ui {

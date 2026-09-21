@@ -20,16 +20,22 @@
 #include "xenia/xbox.h"
 
 DEFINE_bool(interlaced, false, "Toggles interlaced mode.", "Video");
+DEFINE_CVar_DisplayName(interlaced, "Interlaced mode");
 // BT.709 on modern monitors and TVs looks the closest to the Xbox 360 connected
 // to an HDTV.
-DEFINE_uint32(kernel_display_gamma_type, 2,
-              "Display gamma type: 0 - linear, 1 - sRGB (CRT), 2 - BT.709 "
-              "(HDTV), 3 - power specified via kernel_display_gamma_power.",
-              "Kernel");
+DEFINE_uint32_choices(kernel_display_gamma_type, 2,
+                      "Display gamma type: 0 - linear, 1 - sRGB (CRT), 2 - "
+                      "BT.709 (HDTV), 3 - power specified via "
+                      "kernel_display_gamma_power.",
+                      "Kernel", "Display gamma type",
+                      XE_CVAR_CHOICE("Linear", "0"),
+                      XE_CVAR_CHOICE("sRGB (CRT)", "1"),
+                      XE_CVAR_CHOICE("BT.709 (HDTV)", "2"),
+                      XE_CVAR_CHOICE("Power", "3"));
 UPDATE_from_uint32(kernel_display_gamma_type, 2020, 12, 31, 13, 1);
-DEFINE_double(kernel_display_gamma_power, 2.22222233,
-              "Display gamma to use with kernel_display_gamma_type 3.",
-              "Kernel");
+DEFINE_double_range(kernel_display_gamma_power, 2.22222233,
+                    "Display gamma to use with kernel_display_gamma_type 3.",
+                    "Kernel", "Display gamma power", 0.1, 4.0, 0.01);
 
 static std::pair<uint32_t, uint32_t> CalculateScaledAspectRatio(
     uint32_t fb_x, uint32_t fb_y, bool forced_widescreen) {

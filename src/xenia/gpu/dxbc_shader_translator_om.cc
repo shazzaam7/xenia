@@ -23,6 +23,7 @@ DEFINE_bool(use_fuzzy_alpha_epsilon, false,
             "Use approximate compare for alpha values to prevent flickering on "
             "NVIDIA graphics cards",
             "GPU");
+DEFINE_CVar_DisplayName(use_fuzzy_alpha_epsilon, "Fuzzy alpha epsilon");
 
 namespace xe {
 namespace gpu {
