@@ -33,6 +33,7 @@
 #include "xenia/base/profiling.h"
 #include "xenia/base/system.h"
 #include "xenia/base/threading.h"
+#include "xenia/config.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
 #include "xenia/gpu/command_processor.h"
@@ -53,8 +54,10 @@
 #include "xenia/ui/virtual_key.h"
 
 #ifdef XENIA_HAS_WX_UI
+#include "xenia/app/wx/wx_config_editor_dialog.h"
 #include "xenia/app/wx/wx_console_settings_dialog.h"
 #include "xenia/app/wx/wx_content_install_dialog.h"
+#include "xenia/app/wx/wx_game_config_dialog.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/app/wx/wx_window.h"
 #endif
@@ -75,11 +78,13 @@ DECLARE_bool(readback_memexport);
 
 DEFINE_bool(fullscreen, false, "Whether to launch the emulator in fullscreen.",
             "Display");
+DEFINE_CVar_DisplayName(fullscreen, "Fullscreen");
 
 DEFINE_bool(controller_hotkeys, false, "Hotkeys for Xbox and PS controllers.",
             "General");
+DEFINE_CVar_DisplayName(controller_hotkeys, "Controller hotkeys");
 
-DEFINE_string(
+DEFINE_string_choices(
     postprocess_antialiasing, "",
     "Post-processing anti-aliasing effect to apply to the image output of the "
     "game.\n"
@@ -95,8 +100,10 @@ DEFINE_string(
     " fxaa_extreme:\n"
     "  NVIDIA Fast Approximate Anti-Aliasing 3.11, extreme quality preset "
     "(39).",
-    "Display");
-DEFINE_string(
+    "Display", "Anti-aliasing", XE_CVAR_CHOICE("None", ""),
+    XE_CVAR_CHOICE("FXAA", "fxaa"),
+    XE_CVAR_CHOICE("FXAA Extreme", "fxaa_extreme"));
+DEFINE_string_choices(
     postprocess_scaling_and_sharpening, "",
     "Post-processing effect to use for resampling and/or sharpening of the "
     "final display output.\n"
@@ -112,15 +119,19 @@ DEFINE_string(
     "upscaling, or AMD FidelityFX Contrast Adaptive Sharpening for sharpening "
     "while not scaling or downsampling.\n"
     "  For scaling by factors of more than 2x2, multiple FSR passes are done.",
-    "Display");
-DEFINE_double(
+    "Display", "Scaling and sharpening", XE_CVAR_CHOICE("Bilinear", ""),
+    XE_CVAR_CHOICE("CAS", "cas"), XE_CVAR_CHOICE("FSR", "fsr"));
+DEFINE_double_range(
     postprocess_ffx_cas_additional_sharpness,
     xe::ui::Presenter::GuestOutputPaintConfig::kCasAdditionalSharpnessDefault,
     "Additional sharpness for AMD FidelityFX Contrast Adaptive Sharpening "
     "(CAS), from 0 to 1.\n"
     "Higher is sharper.",
-    "Display");
-DEFINE_uint32(
+    "Display", "CAS additional sharpness",
+    xe::ui::Presenter::GuestOutputPaintConfig::kCasAdditionalSharpnessMin,
+    xe::ui::Presenter::GuestOutputPaintConfig::kCasAdditionalSharpnessMax,
+    0.01);
+DEFINE_uint32_range(
     postprocess_ffx_fsr_max_upsampling_passes,
     xe::ui::Presenter::GuestOutputPaintConfig::kFsrMaxUpscalingPassesMax,
     "Maximum number of upsampling passes performed in AMD FidelityFX Super "
@@ -135,14 +146,17 @@ DEFINE_uint32(
     "impact of multiple FSR upsampling passes is too high, or if softer edges "
     "are desired.\n"
     "The default value is the maximum internally supported by Xenia.",
-    "Display");
-DEFINE_double(
+    "Display", "FSR max upsampling passes", 1,
+    xe::ui::Presenter::GuestOutputPaintConfig::kFsrMaxUpscalingPassesMax);
+DEFINE_double_range(
     postprocess_ffx_fsr_sharpness_reduction,
     xe::ui::Presenter::GuestOutputPaintConfig::kFsrSharpnessReductionDefault,
     "Sharpness reduction for AMD FidelityFX Super Resolution 1.0 (FSR), in "
     "stops.\n"
     "Lower is sharper.",
-    "Display");
+    "Display", "FSR sharpness reduction",
+    xe::ui::Presenter::GuestOutputPaintConfig::kFsrSharpnessReductionMin,
+    xe::ui::Presenter::GuestOutputPaintConfig::kFsrSharpnessReductionMax, 0.05);
 // Dithering to 8bpc is enabled by default since the effect is minor, only
 // effects what can't be shown normally by host displays, and nothing is changed
 // by it for 8bpc source without resampling.
@@ -154,15 +168,18 @@ DEFINE_bool(
     "be added to them - disabling may be recommended for 10bpc, but it "
     "depends on the 10bpc displaying capabilities of the actual display used.",
     "Display");
+DEFINE_CVar_DisplayName(postprocess_dither, "Dither output");
 
-DEFINE_int32(recent_titles_entry_amount, 10,
-             "Allows user to define how many titles is saved in list of "
-             "recently played titles.",
-             "General");
+DEFINE_int32_range(recent_titles_entry_amount, 10,
+                   "Allows user to define how many titles is saved in list of "
+                   "recently played titles.",
+                   "General", "Recent titles to keep", 0, 50);
 DEFINE_bool(disable_doubleclick_fullscreen, false,
             "Allows the user to disable the behavior where a fast double-click "
             "causes Xenia to enter fullscreen mode.",
             "General");
+DEFINE_CVar_DisplayName(disable_doubleclick_fullscreen,
+                        "Disable double-click fullscreen");
 
 namespace xe {
 namespace app {
@@ -857,6 +874,17 @@ bool EmulatorWindow::Initialize() {
   }
   main_menu->AddChild(std::move(console_menu));
 
+  // Config menu
+  auto config_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Config");
+  {
+    auto open_config = MenuItem::Create(
+        MenuItem::Type::kString, "&Open config editor", "",
+        std::bind(&EmulatorWindow::ShowConfigEditorDialog, this));
+    config_editor_item_ = open_config.get();
+    config_menu->AddChild(std::move(open_config));
+  }
+  main_menu->AddChild(std::move(config_menu));
+
   // Debug menu (CPU + GPU moved here).
   auto debug_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Debug");
   // CPU menu.
@@ -993,6 +1021,9 @@ bool EmulatorWindow::Initialize() {
       ->AttachLibrary(
           [this](size_t index, int disc, const std::filesystem::path& path) {
             LibraryBoot(index, disc, path);
+          },
+          [this](const std::string& title_id, const std::string& title_name) {
+            ShowGameConfigEditorDialog(title_id, title_name);
           },
           emulator_->storage_root(), emulator_->content_root(),
           [this]() { return emulator_->kernel_state(); });
@@ -1352,8 +1383,13 @@ void EmulatorWindow::StopTitle() {
   std::thread([this]() {
     emulator_->ResetTitle();
     app_context_.CallInUIThread([this]() {
+      // Nothing is running any more, so the overrides that title loaded must
+      // stop deciding the application's values: a per-title file is only meant
+      // to apply to its own title, and the global config is what governs
+      // between titles (and what the config editor edits).
+      config::ClearGameConfig();
       UpdateTitle();
-      UpdateStopEnabled();
+      UpdateTitleDependentMenuItems();
       ShowLibrary();
     });
   }).detach();
@@ -1382,7 +1418,7 @@ bool EmulatorWindow::StopTitleFromGuestThread(
             "Failed to stop the running title cleanly.\n\nCheck xenia.log "
             "for technical details.");
         UpdateTitle();
-        UpdateStopEnabled();
+        UpdateTitleDependentMenuItems();
         ShowLibrary();
       });
       return;
@@ -1390,8 +1426,11 @@ bool EmulatorWindow::StopTitleFromGuestThread(
     if (host_path.empty()) {
       // Plain dashboard exit: back to the library.
       app_context_.CallInUIThread([this]() {
+        // Same as StopTitle: the finished title's overrides must not outlive
+        // it (a relaunch below re-loads the incoming title's own file).
+        config::ClearGameConfig();
         UpdateTitle();
-        UpdateStopEnabled();
+        UpdateTitleDependentMenuItems();
         ShowLibrary();
       });
       return;
@@ -1438,11 +1477,20 @@ void EmulatorWindow::LibraryBoot(size_t index, int disc_number,
   }
 }
 
-void EmulatorWindow::UpdateStopEnabled() {
-  if (stop_item_) {
-    stop_item_->SetEnabled(emulator_->is_title_open());
-    window_->CompleteMainMenuItemsUpdate();
+void EmulatorWindow::UpdateTitleDependentMenuItems() {
+  if (!stop_item_) {
+    return;
   }
+  const bool title_open = emulator_->is_title_open();
+  stop_item_->SetEnabled(title_open);
+  // The config editor applies changes live to subsystems (GPU and audio
+  // backends, mounts, the window) that a running title owns, so it is only
+  // offered with no title loaded - a restart of the app is not enough to make
+  // those edits safe, the guest has to be gone.
+  if (config_editor_item_) {
+    config_editor_item_->SetEnabled(!title_open);
+  }
+  window_->CompleteMainMenuItemsUpdate();
 }
 
 void EmulatorWindow::ShowLibrary() {
@@ -1471,6 +1519,39 @@ void EmulatorWindow::ShowConsoleSettingsDialog() {
   wx_ui::ShowConsoleSettingsDialog(wx_window, emulator_->kernel_state());
 #else
   ToggleConsoleSettingsDialog();
+#endif
+}
+
+void EmulatorWindow::ShowGameConfigEditorDialog(const std::string& title_id,
+                                                const std::string& title_name) {
+  // The per-game editor writes the same cvar layer and applies it live, so it
+  // carries the config editor's no-running-title restriction (see
+  // UpdateTitleDependentMenuItems). The library's context menu has no enabled
+  // state, so this is the only gate for it.
+  if (emulator_->is_title_open()) {
+    XELOGW("Game config editor is unavailable while a title is running.");
+    return;
+  }
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  wx_ui::ShowGameConfigDialog(wx_window, title_id, title_name);
+#else
+  XELOGW("Game config editor requires the wxWidgets UI.");
+#endif
+}
+
+void EmulatorWindow::ShowConfigEditorDialog() {
+  // The menu item is disabled while a title is running (see
+  // UpdateTitleDependentMenuItems); this keeps any other path into the editor
+  // from opening it too.
+  if (emulator_->is_title_open()) {
+    return;
+  }
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  wx_ui::ShowConfigEditorDialog(wx_window);
+#else
+  XELOGW("Config editor requires the wxWidgets UI.");
 #endif
 }
 
@@ -2582,7 +2663,7 @@ void EmulatorWindow::FinishTitleLaunch(
     const auto resolution = emulator_->graphics_system()->GetResolution();
     wx_window->SizeGameView(resolution.first, resolution.second);
 #endif
-    UpdateStopEnabled();
+    UpdateTitleDependentMenuItems();
   }
 }
 
@@ -2651,7 +2732,7 @@ xe::X_STATUS EmulatorWindow::RunTitle(
               "Failed to stop the running title cleanly.\n\nCheck xenia.log "
               "for technical details.");
           UpdateTitle();
-          UpdateStopEnabled();
+          UpdateTitleDependentMenuItems();
           ShowLibrary();
         });
         return;

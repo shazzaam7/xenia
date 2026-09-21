@@ -43,6 +43,8 @@ class WxLibraryView : public wxPanel {
     virtual void OnScanFolder() = 0;
     virtual void OnProfileMenu() = 0;
     virtual void OnViewContent(size_t index) = 0;
+    // Per-title config overrides (the game library's right-click entry).
+    virtual void OnGameConfig(size_t index) = 0;
   };
 
   WxLibraryView(wxWindow* parent, Delegate* delegate,

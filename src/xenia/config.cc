@@ -148,11 +148,109 @@ void ReadConfig(const std::filesystem::path& file_path,
   XELOGI("Loaded config: {}", file_path);
 }
 
+void ClearGameConfig() {
+  if (!cvar::ConfigVars) {
+    return;
+  }
+  for (auto& it : *cvar::ConfigVars) {
+    it.second->ResetGameConfigValue();
+  }
+}
+
+namespace {
+
+std::string_view TrimAscii(std::string_view text) {
+  const auto first = text.find_first_not_of(" \t\r");
+  if (first == std::string_view::npos) {
+    return {};
+  }
+  return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+}
+
+// Collects the keys of a parsed override file that the cvar registry cannot
+// read back: settings removed or renamed since the file was written, or written
+// under a section their variable doesn't use. `ReadGameConfig` walks the
+// registry rather than the file, so such a key is dead weight no editor would
+// ever show or remove. Dotted sections are nested tables in TOML, so the
+// section name is rebuilt while descending.
+void CollectUnknownGameConfigKeys(const toml::table& table,
+                                  std::string_view section,
+                                  std::set<std::string>& unknown) {
+  if (!cvar::ConfigVars) {
+    return;
+  }
+  for (const auto& [key, node] : table) {
+    std::string name(key.str());
+    if (const auto* nested = node.as_table()) {
+      CollectUnknownGameConfigKeys(
+          *nested, section.empty() ? name : std::string(section) + "." + name,
+          unknown);
+      continue;
+    }
+    auto it = cvar::ConfigVars->find(name);
+    if (it == cvar::ConfigVars->end() ||
+        it->second->category() != std::string(section)) {
+      unknown.insert(std::move(name));
+    }
+  }
+}
+
+}  // namespace
+
+void PruneGameConfigFile(const std::filesystem::path& file_path,
+                         const std::set<std::string>& keys) {
+  if (keys.empty()) {
+    return;
+  }
+  std::ifstream file(file_path);
+  if (!file.is_open()) {
+    return;
+  }
+  std::vector<std::string> kept_lines;
+  std::string line;
+  bool dropped_any = false;
+  while (std::getline(file, line)) {
+    const std::string_view trimmed = TrimAscii(line);
+    // Only assignments are considered: the header comments and the section
+    // headers survive verbatim, so the rest of the file keeps its shape.
+    if (!trimmed.empty() && trimmed.front() != '#' && trimmed.front() != '[') {
+      const auto equals = trimmed.find('=');
+      if (equals != std::string_view::npos &&
+          keys.contains(std::string(TrimAscii(trimmed.substr(0, equals))))) {
+        dropped_any = true;
+        continue;
+      }
+    }
+    kept_lines.push_back(line);
+  }
+  file.close();
+  if (!dropped_any) {
+    return;
+  }
+  auto handle = xe::filesystem::OpenFile(file_path, "wb");
+  if (!handle) {
+    XELOGE("Failed to open '{}' for rewriting.", file_path);
+    return;
+  }
+  for (const auto& kept : kept_lines) {
+    fputs((kept + "\n").c_str(), handle);
+  }
+  fclose(handle);
+  XELOGI("Pruned game config: {}", file_path);
+}
+
 void ReadGameConfig(const std::filesystem::path& file_path) {
   if (!cvar::ConfigVars) {
     return;
   }
+  // Start from the global values: the file lists only the settings it
+  // overrides, and a key that is absent from it has to fall back to the
+  // global value rather than keep whatever the previously launched title set.
+  ClearGameConfig();
   const auto config = ParseConfig(file_path);
+  std::set<std::string> unknown_keys;
+  CollectUnknownGameConfigKeys(config, "", unknown_keys);
+  std::set<std::string> mismatched_keys;
   for (auto& it : *cvar::ConfigVars) {
     auto config_var = static_cast<cvar::IConfigVar*>(it.second);
     toml::path config_key =
@@ -160,8 +258,38 @@ void ReadGameConfig(const std::filesystem::path& file_path) {
 
     const auto config_key_node = config.at_path(config_key);
     if (config_key_node) {
-      config_var->LoadConfigValue(config_key_node.node());
+      // The per-title setter, not the global one: this file sits on top of the
+      // global config, so writing it into the global layer would both change
+      // what the global editor shows and copy the override into the global
+      // file on the next save.
+      if (!config_var->LoadGameConfigValue(config_key_node.node())) {
+        mismatched_keys.insert(config_var->name());
+      }
     }
+  }
+  if (!unknown_keys.empty() || !mismatched_keys.empty()) {
+    // An override this build cannot read - the setting was removed or renamed,
+    // or changed type since the file was written (a text option becoming a
+    // boolean, say) - is dropped here and removed from the file. Keeping it
+    // would pin the title to a value that is never applied, with nothing in
+    // the UI able to show or clear it.
+    auto log_names = [&](const char* reason,
+                         const std::set<std::string>& keys) {
+      if (keys.empty()) {
+        return;
+      }
+      std::string names;
+      for (const auto& name : keys) {
+        names += (names.empty() ? "" : ", ") + name;
+      }
+      XELOGW("Game config '{}': dropping {} ({}).", file_path, reason, names);
+    };
+    log_names("unknown settings", unknown_keys);
+    log_names("overrides that no longer fit their type", mismatched_keys);
+
+    std::set<std::string> stale_keys = std::move(unknown_keys);
+    stale_keys.insert(mismatched_keys.begin(), mismatched_keys.end());
+    PruneGameConfigFile(file_path, stale_keys);
   }
   XELOGI("Loaded game config: {}", file_path);
 }
@@ -184,18 +312,7 @@ void SaveConfig() {
       vars.push_back(s.second);
     }
   }
-  std::ranges::sort(vars, [](auto a, auto b) {
-    if (a->category() < b->category()) {
-      return true;
-    }
-    if (a->category() > b->category()) {
-      return false;
-    }
-    if (a->name() < b->name()) {
-      return true;
-    }
-    return false;
-  });
+  std::ranges::sort(vars, sortCvar);
 
   // we use our own write logic because cpptoml doesn't
   // allow us to specify comments :(
@@ -305,13 +422,99 @@ void SetupConfig(const std::filesystem::path& config_folder) {
   }
 }
 
+std::filesystem::path GameConfigPath(const std::string& title_id) {
+  if (config_folder.empty()) {
+    return std::filesystem::path();
+  }
+  return config_folder / "config" / (title_id + game_config_suffix);
+}
+
 void LoadGameConfig(const std::string_view title_id) {
-  const auto game_config_folder = config_folder / "config";
-  const auto game_config_path =
-      game_config_folder / (std::string(title_id) + game_config_suffix);
+  const auto game_config_path = GameConfigPath(std::string(title_id));
   if (std::filesystem::exists(game_config_path)) {
     ReadGameConfig(game_config_path);
+    return;
   }
+  // This title has no overrides of its own - the previous title's, which are
+  // still in the cvars, must not carry over to it.
+  ClearGameConfig();
+}
+
+bool SaveGameConfigSparse(const std::string& title_id,
+                          const std::string& title_name,
+                          const std::map<std::string, std::string>* reasons) {
+  const auto game_config_path = GameConfigPath(title_id);
+  if (game_config_path.empty()) {
+    return false;
+  }
+
+  std::vector<cvar::IConfigVar*> vars;
+  if (cvar::ConfigVars) {
+    for (const auto& it : *cvar::ConfigVars) {
+      auto* config_var = it.second;
+      // Transient variables are runtime state, and a variable without a
+      // per-game value was never overridden - writing it would turn this file
+      // into a copy of the global config.
+      if (!config_var->is_transient() && config_var->has_game_config_value()) {
+        vars.push_back(config_var);
+      }
+    }
+  }
+  std::ranges::sort(vars, sortCvar);
+
+  if (vars.empty()) {
+    // Nothing is overridden any more: the title falls back to the global
+    // config entirely, so the file itself goes away.
+    std::error_code ec;
+    const bool removed = std::filesystem::remove(game_config_path, ec);
+    if (ec) {
+      XELOGE("Failed to remove '{}': {}", game_config_path, ec.message());
+      return false;
+    }
+    if (removed) {
+      XELOGI("Removed game config: {}", game_config_path);
+    }
+    return true;
+  }
+
+  xe::StringBuffer sb;
+  sb.AppendFormat("# Title Name: {}\n", title_name);
+  sb.AppendFormat("# Title ID: {}\n", title_id);
+  std::string last_category;
+  for (auto* config_var : vars) {
+    if (last_category != config_var->category()) {
+      last_category = config_var->category();
+      sb.AppendFormat("\n[{}]\n", last_category);
+    }
+    // game_config_value() is already the TOML text (quoted and escaped for
+    // strings and paths), exactly like config_value() in SaveConfig.
+    const std::optional<std::string> value = config_var->game_config_value();
+    assert_true(value.has_value());
+    sb.AppendFormat("{} = {}", config_var->name(), *value);
+    if (reasons) {
+      auto it = reasons->find(config_var->name());
+      if (it != reasons->end() && !it->second.empty()) {
+        // The reason is a single-line TOML comment, so line breaks in it would
+        // split the line into something that no longer parses as a comment.
+        std::string reason = it->second;
+        std::ranges::replace(reason, '\n', ' ');
+        std::ranges::replace(reason, '\r', ' ');
+        sb.AppendFormat(" # {}", reason);
+      }
+    }
+    sb.Append('\n');
+  }
+
+  xe::filesystem::CreateParentFolder(game_config_path);
+  auto handle = xe::filesystem::OpenFile(game_config_path, "wb");
+  if (!handle) {
+    XELOGE("Failed to open '{}' for writing.", game_config_path);
+    return false;
+  }
+  fwrite(sb.buffer(), 1, sb.length(), handle);
+  fclose(handle);
+  XELOGI("Saved game config: {}", game_config_path);
+  return true;
 }
 
 }  // namespace config

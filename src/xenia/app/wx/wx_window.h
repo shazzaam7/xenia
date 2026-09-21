@@ -85,7 +85,11 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // once the frame exists; all other calls are no-ops until attached.
   using LibraryBootCallback = std::function<void(
       size_t index, int disc_number, const std::filesystem::path& path)>;
+  // Opens the per-title config editor for a library entry (title id, name).
+  using LibraryGameConfigCallback = std::function<void(
+      const std::string& title_id, const std::string& title_name)>;
   void AttachLibrary(LibraryBootCallback on_boot,
+                     LibraryGameConfigCallback on_game_config,
                      const std::filesystem::path& storage_root,
                      const std::filesystem::path& content_root,
                      std::function<kernel::KernelState*()> kernel_state);
@@ -114,6 +118,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnScanFolder() override;
   void OnProfileMenu() override;
   void OnViewContent(size_t index) override;
+  void OnGameConfig(size_t index) override;
 
  protected:
   bool OpenImpl() override;
@@ -208,6 +213,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   wxSimplebook* book_ = nullptr;
   WxLibraryView* library_view_ = nullptr;
   LibraryBootCallback library_on_boot_;
+  LibraryGameConfigCallback library_on_game_config_;
   std::filesystem::path library_storage_root_;
   std::filesystem::path library_content_root_;
   std::vector<GameEntry> library_entries_;

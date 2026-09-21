@@ -101,6 +101,12 @@ class EmulatorWindow {
   void ShowProfileMenu();
   // Shows the console settings dialog (wxWidgets in wx builds).
   void ShowConsoleSettingsDialog();
+  // Shows the config.toml editor (wxWidgets only).
+  void ShowConfigEditorDialog();
+  // Shows the per-title override editor for one library entry (wxWidgets
+  // only). Refuses to open while a title is running, like the global editor.
+  void ShowGameConfigEditorDialog(const std::string& title_id,
+                                  const std::string& title_name);
   void ToggleProfilesConfigDialog();
   void ToggleXMPConfigDialog();
   void ToggleConsoleSettingsDialog();
@@ -284,7 +290,9 @@ class EmulatorWindow {
                                 std::vector<uint8_t> launch_data);
   void LibraryBoot(size_t index, int disc_number,
                    const std::filesystem::path& path);
-  void UpdateStopEnabled();
+  // Applies the title-open state to the menu items that depend on it (Stop,
+  // and Open config editor, which is off-limits while a title is running).
+  void UpdateTitleDependentMenuItems();
   void InstallContent();
   void ExtractZarchive();
   void CreateZarchive();
@@ -363,6 +371,7 @@ class EmulatorWindow {
 
   // Game library state (wx backend only; the window owns the entries).
   ui::MenuItem* stop_item_ = nullptr;
+  ui::MenuItem* config_editor_item_ = nullptr;
   bool has_library_boot_ = false;
   size_t library_boot_index_ = 0;
   int library_boot_disc_ = 1;

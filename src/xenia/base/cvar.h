@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,14 @@ enum class ConfigVarValueKind {
   kPath,
 };
 
+// Strict "could this text be parsed into a variable of this kind" test.
+// Shared by the config editors, which refuse to apply the text, and the config
+// layer, which uses it to spot a stored value that no longer fits the variable
+// it belongs to. The engine's from_string is lenient - it truncates "12ab" to
+// 12 and degrades garbage to T() instead of reporting an error - so this has to
+// be stricter than parsing.
+bool IsValidConfigValueText(ConfigVarValueKind kind, std::string_view text);
+
 class ICommandVar {
  public:
   virtual ~ICommandVar() = default;
@@ -117,8 +126,31 @@ class IConfigVar : virtual public ICommandVar {
   virtual bool SetFromString(const std::string& text) = 0;
   virtual std::string config_value() const = 0;
   virtual void LoadConfigValue(const toml::node* result) = 0;
-  virtual void LoadGameConfigValue(const toml::node* result) = 0;
+  // Applies a value from a per-title override file. Returns false, leaving the
+  // variable without an override, when the stored TOML value does not fit the
+  // variable's current type - which happens when a setting changes type between
+  // builds (a text option becoming a boolean, say). The caller drops such
+  // settings, since keeping them would pin the title to a value it can no
+  // longer parse.
+  virtual bool LoadGameConfigValue(const toml::node* result) = 0;
   virtual void ResetConfigValueToDefault() = 0;
+  // Per-game (per-title) layer, stored in
+  // <storage_root>/config/<TITLEID>.config.toml on top of the global config.
+  // Both accessors return nullopt when the variable has no override and thus
+  // inherits the global value; game_config_value() is the TOML text to write
+  // (like config_value()), game_config_display_value() the raw text an editor
+  // edits (like display_value()).
+  virtual std::optional<std::string> game_config_value() const = 0;
+  virtual std::optional<std::string> game_config_display_value() const = 0;
+  virtual bool has_game_config_value() const = 0;
+  // Applies raw editor text as a per-game override - the counterpart of
+  // SetFromString, which writes the global layer instead. Text that does not
+  // fit the variable's type is rejected (false) rather than degraded, since it
+  // would otherwise be written to the override file as a value that can never
+  // be read back.
+  virtual bool SetGameConfigValueFromString(const std::string& text) = 0;
+  // Drops the override so the global value applies again.
+  virtual void ResetGameConfigValue() = 0;
 };
 
 template <class T>
@@ -166,7 +198,12 @@ class ConfigVar : public CommandVar<T>, virtual public IConfigVar {
   bool SetFromString(const std::string& text) override;
   void AddToLaunchOptions(cxxopts::Options* options) override;
   void LoadConfigValue(const toml::node* result) override;
-  void LoadGameConfigValue(const toml::node* result) override;
+  bool LoadGameConfigValue(const toml::node* result) override;
+  std::optional<std::string> game_config_value() const override;
+  std::optional<std::string> game_config_display_value() const override;
+  bool has_game_config_value() const override;
+  bool SetGameConfigValueFromString(const std::string& text) override;
+  void ResetGameConfigValue() override;
   void SetConfigValue(T val);
   void SetGameConfigValue(T val);
   // Changes the actual value used to the one specified, and also makes it the
@@ -244,23 +281,29 @@ inline void ConfigVar<std::filesystem::path>::LoadConfigValue(
       xe::utf8::fix_path_separators(result->as_string()->value_or(""))));
 }
 template <class T>
-void ConfigVar<T>::LoadGameConfigValue(const toml::node* result) {
+bool ConfigVar<T>::LoadGameConfigValue(const toml::node* result) {
   auto value_opt = result->value<T>();
-  if (value_opt) {
-    SetGameConfigValue(value_opt.value());
-  } else {
-    // Type mismatch - track for warning
-    if (!config_type_mismatch_warnings) {
-      config_type_mismatch_warnings = new std::vector<std::string>();
-    }
-    config_type_mismatch_warnings->push_back(this->name_);
+  if (!value_opt) {
+    // Reported by the caller instead of through
+    // config_type_mismatch_warnings: that list is shown by the global config
+    // load, which has already run by the time a title's file is read.
+    return false;
   }
+  SetGameConfigValue(value_opt.value());
+  return true;
 }
 template <>
-inline void ConfigVar<std::filesystem::path>::LoadGameConfigValue(
+inline bool ConfigVar<std::filesystem::path>::LoadGameConfigValue(
     const toml::node* result) {
+  // as_string() returns null for anything that isn't a TOML string, so a path
+  // option whose stored value changed type must be rejected here rather than
+  // dereferenced.
+  if (!result->is_string()) {
+    return false;
+  }
   SetGameConfigValue(xe::to_path(
       xe::utf8::fix_path_separators(result->as_string()->value_or(""))));
+  return true;
 }
 template <class T>
 CommandVar<T>::CommandVar(const char* name, T* default_value,
@@ -453,6 +496,70 @@ void ConfigVar<T>::OverrideConfigValue(T val) {
 template <class T>
 void ConfigVar<T>::ResetConfigValueToDefault() {
   SetConfigValue(this->default_value_);
+}
+// Unlike display_value(), ToString already escapes string and path values, so
+// one implementation covers every type.
+template <class T>
+std::optional<std::string> ConfigVar<T>::game_config_value() const {
+  if (!game_config_value_) {
+    return std::nullopt;
+  }
+  return this->ToString(*game_config_value_);
+}
+template <class T>
+std::optional<std::string> ConfigVar<T>::game_config_display_value() const {
+  if (!game_config_value_) {
+    return std::nullopt;
+  }
+  return this->ToString(*game_config_value_);
+}
+template <>
+inline std::optional<std::string>
+ConfigVar<std::string>::game_config_display_value() const {
+  if (!game_config_value_) {
+    return std::nullopt;
+  }
+  return *game_config_value_;
+}
+template <>
+inline std::optional<std::string>
+ConfigVar<std::filesystem::path>::game_config_display_value() const {
+  if (!game_config_value_) {
+    return std::nullopt;
+  }
+  return xe::path_to_utf8(*game_config_value_);
+}
+template <class T>
+bool ConfigVar<T>::has_game_config_value() const {
+  return game_config_value_ != nullptr;
+}
+template <class T>
+bool ConfigVar<T>::SetGameConfigValueFromString(const std::string& text) {
+  if (!IsValidConfigValueText(this->value_kind(), text)) {
+    return false;
+  }
+  SetGameConfigValue(this->Convert(text));
+  return true;
+}
+template <>
+inline bool ConfigVar<std::string>::SetGameConfigValueFromString(
+    const std::string& text) {
+  SetGameConfigValue(text);
+  return true;
+}
+template <>
+inline bool ConfigVar<std::filesystem::path>::SetGameConfigValueFromString(
+    const std::string& text) {
+  SetGameConfigValue(xe::to_path(text));
+  return true;
+}
+template <class T>
+void ConfigVar<T>::ResetGameConfigValue() {
+  if (!game_config_value_) {
+    return;
+  }
+  game_config_value_.reset();
+  UpdateValue();
 }
 
 // CVars can be initialized before these, thus initialized on-demand using new.
