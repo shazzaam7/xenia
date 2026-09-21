@@ -68,9 +68,9 @@
 #include "xenia/cpu/backend/a64/a64_backend.h"
 #endif  // XE_ARCH
 
-DEFINE_double(time_scalar, 1.0,
-              "Scalar used to speed or slow time (1x, 2x, 1/2x, etc).",
-              "General");
+DEFINE_double_range(time_scalar, 1.0,
+                    "Scalar used to speed or slow time (1x, 2x, 1/2x, etc).",
+                    "General", "Time scalar", 0.05, 10.0, 0.05);
 
 DEFINE_string(
     launch_module, "",
@@ -78,20 +78,27 @@ DEFINE_string(
     "or the module specified by the game. Leave blank to launch the default "
     "module.",
     "General");
+DEFINE_CVar_DisplayName(launch_module, "Launch module");
 
 DEFINE_bool(allow_game_relative_writes, false,
             "Not useful to non-developers. Allows code to write to paths "
             "relative to game://. Used for "
             "generating test data to compare with original hardware. ",
             "General");
+DEFINE_CVar_DisplayName(allow_game_relative_writes,
+                        "Allow game-relative writes");
 
 DECLARE_bool(allow_plugins);
 
-DEFINE_int32(priority_class, 0,
-             "Forces Xenia to use different process priority than default one. "
-             "It might affect performance and cause unexpected bugs. Possible "
-             "values: 0 - Normal, 1 - Above normal, 2 - High",
-             "General");
+DEFINE_int32_choices(priority_class, 0,
+                     "Forces Xenia to use different process priority than "
+                     "default one. It might affect performance and cause "
+                     "unexpected bugs.",
+                     "General", "Process priority",
+                     XE_CVAR_CHOICE("Normal", "0"),
+                     XE_CVAR_CHOICE("Above normal", "1"),
+                     XE_CVAR_CHOICE("High", "2"),
+                     XE_CVAR_CHOICE("Realtime", "3"));
 
 DECLARE_int32(console_type);
 

@@ -48,6 +48,7 @@
 
 DEFINE_bool(debug, DEFAULT_DEBUG_FLAG,
             "Allow debugging and retain debug information.", "General");
+DEFINE_CVar_DisplayName(debug, "Debug mode");
 DEFINE_path(trace_function_data_path, "", "File to write trace data to.",
             "CPU");
 DEFINE_bool(break_on_start, false, "Break into the debugger on startup.",

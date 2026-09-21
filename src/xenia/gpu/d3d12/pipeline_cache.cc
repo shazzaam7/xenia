@@ -47,13 +47,13 @@ DEFINE_bool(
     "supported by the OS, and DirectX Shader Compiler DLLs available at "
     "https://github.com/microsoft/DirectXShaderCompiler/releases are present.",
     "D3D12");
-DEFINE_int32(
+DEFINE_int32_range(
     d3d12_pipeline_creation_threads, -1,
     "Number of threads used for graphics pipeline creation. -1 to calculate "
     "automatically (75% of logical CPU cores), a positive number to specify "
     "the number of threads explicitly (up to the number of logical CPU cores), "
     "0 to disable multithreaded pipeline creation.",
-    "D3D12");
+    "D3D12", "Pipeline creation threads", -1, 64);
 DEFINE_bool(d3d12_tessellation_wireframe, false,
             "Display tessellated surfaces as wireframe for debugging.",
             "D3D12");

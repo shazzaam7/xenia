@@ -12,25 +12,32 @@
 #define XBYAK_NO_OP_NAMES
 #include "third_party/xbyak/xbyak/xbyak.h"
 #include "third_party/xbyak/xbyak/xbyak_util.h"
-DEFINE_int64(x64_extension_mask, -1LL,
-             "Allow the detection and utilization of specific instruction set "
-             "features.\n"
-             "    0 = x86_64 + AVX1\n"
-             "    1 = AVX2\n"
-             "    2 = FMA\n"
-             "    4 = LZCNT\n"
-             "    8 = BMI1\n"
-             "   16 = BMI2\n"
-             "   32 = F16C\n"
-             "   64 = Movbe\n"
-             "  128 = GFNI\n"
-             "  256 = AVX512F\n"
-             "  512 = AVX512VL\n"
-             " 1024 = AVX512BW\n"
-             " 2048 = AVX512DQ\n"
-             " 4096 = AVX512VBMI\n"
-             "   -1 = Detect and utilize all possible processor features\n",
-             "x64");
+DEFINE_int64_flags(
+    x64_extension_mask, -1LL,
+    "Allow the detection and utilization of specific instruction set "
+    "features.\n"
+    "    0 = x86_64 + AVX1\n"
+    "    1 = AVX2\n"
+    "    2 = FMA\n"
+    "    4 = LZCNT\n"
+    "    8 = BMI1\n"
+    "   16 = BMI2\n"
+    "   32 = F16C\n"
+    "   64 = Movbe\n"
+    "  128 = GFNI\n"
+    "  256 = AVX512F\n"
+    "  512 = AVX512VL\n"
+    " 1024 = AVX512BW\n"
+    " 2048 = AVX512DQ\n"
+    " 4096 = AVX512VBMI\n"
+    "   -1 = Detect and utilize all possible processor features\n",
+    "x64", "Host CPU feature mask", XE_CVAR_CHOICE("AVX2", "1"),
+    XE_CVAR_CHOICE("FMA", "2"), XE_CVAR_CHOICE("LZCNT/ABM", "4"),
+    XE_CVAR_CHOICE("BMI1", "8"), XE_CVAR_CHOICE("BMI2", "16"),
+    XE_CVAR_CHOICE("PrefetchW", "32"), XE_CVAR_CHOICE("Movbe", "64"),
+    XE_CVAR_CHOICE("GFNI", "128"), XE_CVAR_CHOICE("AVX512F", "256"),
+    XE_CVAR_CHOICE("AVX512VL", "512"), XE_CVAR_CHOICE("AVX512BW", "1024"),
+    XE_CVAR_CHOICE("AVX512DQ", "2048"), XE_CVAR_CHOICE("AVX512VBMI", "4096"));
 namespace xe {
 namespace amd64 {
 static uint64_t g_feature_flags = 0U;

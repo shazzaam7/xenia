@@ -16,8 +16,10 @@
 #include "xenia/ui/imgui_drawer.h"
 #include "xenia/ui/presenter.h"
 
-DEFINE_int32(window_size_x, 1280, "Xenia window width", "UI");
-DEFINE_int32(window_size_y, 720, "Xenia window height", "UI");
+DEFINE_int32_range(window_size_x, 1280, "Xenia window width", "UI",
+                   "Window width", 0, 10000);
+DEFINE_int32_range(window_size_y, 720, "Xenia window height", "UI",
+                   "Window height", 0, 10000);
 
 namespace xe {
 namespace ui {

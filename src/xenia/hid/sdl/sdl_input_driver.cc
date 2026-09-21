@@ -31,6 +31,7 @@
 DEFINE_path(mappings_file, "gamecontrollerdb.txt",
             "Filename of a database with custom game controller mappings.",
             "SDL");
+DEFINE_CVar_PathPicker(mappings_file, "Controller mappings file", false);
 
 DEFINE_string(
     controller_subtypes, "",

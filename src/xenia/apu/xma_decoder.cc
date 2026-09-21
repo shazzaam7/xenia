@@ -60,8 +60,9 @@ DEFINE_bool(use_dedicated_xma_thread, true,
             "Enables XMA decoding on separate thread. Disabled should produce "
             "better results, but decrease performance a bit.",
             "APU");
+DEFINE_CVar_DisplayName(use_dedicated_xma_thread, "Dedicated XMA thread");
 
-DEFINE_string(
+DEFINE_string_choices(
     xma_decoder, "new",
     "Decoder version used to process XMA audio.\n"
     "Use: [fake, master, old, new]\n"
@@ -71,7 +72,9 @@ DEFINE_string(
     "improvements.\n"
     " new: \n  New version of decoder. Provides highest stability, but isn't "
     "yet finished.\n",
-    "APU");
+    "APU", "XMA decoder", XE_CVAR_CHOICE("New (most stable)", "new"),
+    XE_CVAR_CHOICE("Old", "old"), XE_CVAR_CHOICE("Master", "master"),
+    XE_CVAR_CHOICE("Fake (no audio)", "fake"));
 
 namespace xe {
 namespace apu {

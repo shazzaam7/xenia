@@ -36,11 +36,15 @@ DEFINE_bool(
     "offering the lowest latency with the possibility of tearing in certain "
     "cases, and, depending on the configuration, variable refresh rate.",
     "Vulkan");
+DEFINE_CVar_DisplayName(vulkan_allow_present_mode_immediate,
+                        "Allow immediate present mode");
 DEFINE_bool(
     vulkan_allow_present_mode_mailbox, true,
     "When available, allow the mailbox presentation mode (2nd priority), "
     "offering low latency without the possibility of tearing.",
     "Vulkan");
+DEFINE_CVar_DisplayName(vulkan_allow_present_mode_mailbox,
+                        "Allow mailbox present mode");
 DEFINE_bool(
     vulkan_allow_present_mode_fifo_relaxed, true,
     "When available, allow the relaxed first-in-first-out presentation mode "
@@ -48,6 +52,8 @@ DEFINE_bool(
     "may present with tearing if frames don't meet the host display refresh "
     "rate.",
     "Vulkan");
+DEFINE_CVar_DisplayName(vulkan_allow_present_mode_fifo_relaxed,
+                        "Allow FIFO relaxed present mode");
 DEFINE_bool(
     vulkan_semaphore_reuse_workaround, false,
     "Wait for presentation queue idle before each frame to prevent semaphore "

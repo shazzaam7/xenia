@@ -27,6 +27,7 @@ extern "C" {
 }  // extern "C"
 
 DEFINE_bool(enable_xmp, true, "Enables Music Player playback.", "APU");
+DEFINE_CVar_DisplayName(enable_xmp, "Music player (XMP)");
 
 namespace xe {
 namespace apu {

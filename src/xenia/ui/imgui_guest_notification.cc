@@ -22,6 +22,7 @@ DEFINE_string(notification_sound_path, "",
               "Path (including filename) to selected notification sound. Sound "
               "MUST be in wav format!",
               "General");
+DEFINE_CVar_DisplayName(notification_sound_path, "Notification sound");
 
 namespace xe {
 namespace ui {

@@ -23,6 +23,7 @@
 
 DEFINE_bool(enable_console, false, "Open a console window with the main window",
             "Logging");
+DEFINE_CVar_DisplayName(enable_console, "Show console window");
 
 static uintptr_t g_xenia_exe_base = 0;
 static size_t g_xenia_exe_size = 0;

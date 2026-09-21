@@ -24,13 +24,16 @@ namespace xe {
 namespace hid {
 
 DEFINE_bool(vibration, true, "Toggle controller vibration.", "HID");
+DEFINE_CVar_DisplayName(vibration, "Controller vibration");
 
-DEFINE_double(left_stick_deadzone_percentage, 0.0,
-              "Defines deadzone level for left stick. Allowed range [0.0-1.0].",
-              "HID");
-DEFINE_double(
+DEFINE_double_range(left_stick_deadzone_percentage, 0.0,
+                    "Defines deadzone level for left stick. Allowed range "
+                    "[0.0-1.0].",
+                    "HID", "Left stick deadzone", 0.0, 1.0, 0.01);
+DEFINE_double_range(
     right_stick_deadzone_percentage, 0.0,
-    "Defines deadzone level for right stick. Allowed range [0.0-1.0].", "HID");
+    "Defines deadzone level for right stick. Allowed range [0.0-1.0].", "HID",
+    "Right stick deadzone", 0.0, 1.0, 0.01);
 
 InputSystem::InputSystem(xe::ui::Window* window) : window_(window) {
 #ifdef XE_PLATFORM_WIN32

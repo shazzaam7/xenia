@@ -13,6 +13,7 @@
 #include "xenia/gpu/texture_info.h"
 
 DEFINE_bool(texture_dump, false, "Dump textures to DDS", "GPU");
+DEFINE_CVar_DisplayName(texture_dump, "Dump textures to DDS");
 
 namespace xe {
 namespace gpu {

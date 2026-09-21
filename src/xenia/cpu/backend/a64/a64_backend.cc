@@ -36,8 +36,9 @@
 #include "xenia/cpu/thread_state.h"
 #include "xenia/cpu/xex_module.h"
 
-DEFINE_int64(a64_max_stackpoints, 65536,
-             "Max number of host->guest stack mappings we can record.", "a64");
+DEFINE_int64_range(a64_max_stackpoints, 65536,
+                   "Max number of host->guest stack mappings we can record.",
+                   "a64", "Max stack points", 0, 1048576);
 
 DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
             "Records entries for guest/host stack mappings at function starts "

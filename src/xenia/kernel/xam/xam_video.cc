@@ -13,6 +13,7 @@
 
 DEFINE_bool(enable_3d_mode, false,
             "Enables usage of stereoscopic mode in titles.", "Video");
+DEFINE_CVar_DisplayName(enable_3d_mode, "Enable 3D (stereoscopic) mode");
 
 namespace xe {
 namespace kernel {

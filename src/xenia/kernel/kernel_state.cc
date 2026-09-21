@@ -31,12 +31,16 @@
 #include "third_party/crypto/TinySHA1.hpp"
 
 DEFINE_bool(apply_title_update, true, "Apply title updates.", "Kernel");
+DEFINE_CVar_DisplayName(apply_title_update, "Apply title updates");
 DEFINE_bool(allow_incompatible_title_update, false,
             "Allow title updates with mismatched signatures to be applied.",
             "Kernel");
+DEFINE_CVar_DisplayName(allow_incompatible_title_update,
+                        "Allow incompatible title updates");
 
 DEFINE_uint32(kernel_build_version, 1888, "Define current kernel version",
               "Kernel");
+DEFINE_CVar_DisplayName(kernel_build_version, "Kernel build version");
 
 DECLARE_string(cl);
 

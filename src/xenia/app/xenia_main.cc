@@ -70,21 +70,60 @@
 
 #if XE_PLATFORM_WIN32
 #define APU_OPTIONS "[any, nop, sdl, xaudio2]"
+#define APU_CHOICES                                                    \
+  XE_CVAR_CHOICE("Auto (best available)", "any"),                      \
+      XE_CVAR_CHOICE("No audio", "nop"), XE_CVAR_CHOICE("SDL", "sdl"), \
+      XE_CVAR_CHOICE("XAudio2", "xaudio2")
 #define GPU_OPTIONS "[any, d3d12, vulkan, null]"
+#define GPU_CHOICES                               \
+  XE_CVAR_CHOICE("Auto (best available)", "any"), \
+      XE_CVAR_CHOICE("Direct3D 12", "d3d12"),     \
+      XE_CVAR_CHOICE("Vulkan", "vulkan"),         \
+      XE_CVAR_CHOICE("Null (headless)", "null")
 #define HID_OPTIONS "[any, nop, sdl, keyboard, xinput]"
+#define HID_CHOICES                                                    \
+  XE_CVAR_CHOICE("Auto (best available)", "any"),                      \
+      XE_CVAR_CHOICE("No input", "nop"), XE_CVAR_CHOICE("SDL", "sdl"), \
+      XE_CVAR_CHOICE("Keyboard", "keyboard"),                          \
+      XE_CVAR_CHOICE("XInput", "xinput")
 #elif XE_PLATFORM_LINUX
 #define APU_OPTIONS "[any, alsa, nop, sdl]"
+#define APU_CHOICES                                                      \
+  XE_CVAR_CHOICE("Auto (best available)", "any"),                        \
+      XE_CVAR_CHOICE("ALSA", "alsa"), XE_CVAR_CHOICE("No audio", "nop"), \
+      XE_CVAR_CHOICE("SDL", "sdl")
 #define GPU_OPTIONS "[any, vulkan, null]"
+#define GPU_CHOICES                               \
+  XE_CVAR_CHOICE("Auto (best available)", "any"), \
+      XE_CVAR_CHOICE("Vulkan", "vulkan"),         \
+      XE_CVAR_CHOICE("Null (headless)", "null")
 #define HID_OPTIONS "[any, nop, sdl, keyboard]"
+#define HID_CHOICES                                                    \
+  XE_CVAR_CHOICE("Auto (best available)", "any"),                      \
+      XE_CVAR_CHOICE("No input", "nop"), XE_CVAR_CHOICE("SDL", "sdl"), \
+      XE_CVAR_CHOICE("Keyboard", "keyboard")
 #else
 #define APU_OPTIONS "[any, nop, sdl]"
+#define APU_CHOICES                               \
+  XE_CVAR_CHOICE("Auto (best available)", "any"), \
+      XE_CVAR_CHOICE("No audio", "nop"), XE_CVAR_CHOICE("SDL", "sdl")
 #define GPU_OPTIONS "[any, vulkan, null]"
+#define GPU_CHOICES                               \
+  XE_CVAR_CHOICE("Auto (best available)", "any"), \
+      XE_CVAR_CHOICE("Vulkan", "vulkan"),         \
+      XE_CVAR_CHOICE("Null (headless)", "null")
 #define HID_OPTIONS "[any, nop, sdl]"
+#define HID_CHOICES                               \
+  XE_CVAR_CHOICE("Auto (best available)", "any"), \
+      XE_CVAR_CHOICE("No input", "nop"), XE_CVAR_CHOICE("SDL", "sdl")
 #endif
 
-DEFINE_string(apu, "any", "Audio system. Use: " APU_OPTIONS, "APU");
-DEFINE_string(gpu, "any", "Graphics system. Use: " GPU_OPTIONS, "GPU");
-DEFINE_string(hid, "any", "Input system. Use: " HID_OPTIONS, "HID");
+DEFINE_string_choices(apu, "any", "Audio system. Use: " APU_OPTIONS, "APU",
+                      "Audio system", APU_CHOICES);
+DEFINE_string_choices(gpu, "any", "Graphics system. Use: " GPU_OPTIONS, "GPU",
+                      "Graphics system", GPU_CHOICES);
+DEFINE_string_choices(hid, "any", "Input system. Use: " HID_OPTIONS, "HID",
+                      "Input system", HID_CHOICES);
 
 DEFINE_path(
     storage_root, "",
@@ -92,11 +131,13 @@ DEFINE_path(
     "to use the path preferred for the OS, such as the documents folder, or "
     "the emulator executable directory if portable.txt is present in it.",
     "Storage");
+DEFINE_CVar_PathPicker(storage_root, "Storage root", true);
 DEFINE_path(
     content_root, "",
     "Root path for guest content storage (saves, etc.), or empty to use the "
     "content folder under the storage root.",
     "Storage");
+DEFINE_CVar_PathPicker(content_root, "Content root", true);
 DEFINE_path(
     cache_root, "",
     "Root path for files used to speed up certain parts of the emulator or the "
@@ -105,14 +146,18 @@ DEFINE_path(
     "under the storage root, or, if available, the cache directory preferred "
     "for the OS, will be used.",
     "Storage");
+DEFINE_CVar_PathPicker(cache_root, "Cache root", true);
 
 DEFINE_bool(mount_scratch, false, "Enable scratch mount", "Storage");
+DEFINE_CVar_DisplayName(mount_scratch, "Mount scratch");
 
 DEFINE_bool(mount_cache, true, "Enable cache mount", "Storage");
+DEFINE_CVar_DisplayName(mount_cache, "Mount cache");
 UPDATE_from_bool(mount_cache, 2024, 8, 31, 20, false);
 
 DEFINE_bool(mount_memory_unit, false, "Enable memory unit (MU) mount",
             "Storage");
+DEFINE_CVar_DisplayName(mount_memory_unit, "Mount memory unit (MU)");
 
 DECLARE_bool(force_mount_devkit);
 
@@ -132,6 +177,7 @@ DEFINE_transient_bool(portable, true,
 DECLARE_bool(debug);
 
 DEFINE_bool(discord, true, "Enable Discord rich presence", "General");
+DEFINE_CVar_DisplayName(discord, "Discord rich presence");
 
 DECLARE_int32(window_size_x);
 DECLARE_int32(window_size_y);

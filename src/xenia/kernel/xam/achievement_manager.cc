@@ -18,12 +18,15 @@
 
 DEFINE_bool(show_achievement_notification, false,
             "Show achievement notification on screen.", "UI");
+DEFINE_CVar_DisplayName(show_achievement_notification,
+                        "Show achievement notifications");
 
 DEFINE_string(
     default_achievements_backend, "GPD",
     "Defines which achievements backend should be used as an default. "
     "Possible options: GPD.",
     "Kernel");
+DEFINE_CVar_DisplayName(default_achievements_backend, "Achievements backend");
 
 DECLARE_int32(user_language);
 

@@ -17,6 +17,8 @@ DEFINE_bool(allow_avatar_initialization, false,
             "Only set true when testing Avatar games. Certain games may crash "
             "due to requirement of full avatar implementation.",
             "Kernel");
+DEFINE_CVar_DisplayName(allow_avatar_initialization,
+                        "Allow avatar initialization");
 
 namespace xe {
 namespace kernel {

@@ -9,6 +9,7 @@
 
 #include "xenia/ui/vulkan/vulkan_provider.h"
 
+#include <string>
 #include <vector>
 
 #include "xenia/base/cvar.h"
@@ -16,17 +17,57 @@
 #include "xenia/ui/vulkan/vulkan_immediate_drawer.h"
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 
+namespace {
+
+// Dropdown contents for the config editor. Enumerating devices needs a live
+// instance, so a throwaway one is created on first use and the result is kept
+// for the process lifetime; if Vulkan is unavailable the list stays empty and
+// the editor falls back to a plain field.
+const std::vector<cvar::ConfigVarEditorInfo::Choice>& VulkanDeviceChoices() {
+  static const std::vector<cvar::ConfigVarEditorInfo::Choice>* choices = [] {
+    auto* labels = new std::vector<std::string>();
+    auto* values = new std::vector<std::string>();
+    labels->push_back("Any compatible device");
+    values->push_back("-1");
+    std::unique_ptr<xe::ui::vulkan::VulkanInstance> instance =
+        xe::ui::vulkan::VulkanInstance::Create(false, false);
+    if (instance) {
+      std::vector<VkPhysicalDevice> physical_devices;
+      instance->EnumeratePhysicalDevices(physical_devices);
+      const xe::ui::vulkan::VulkanInstance::Functions& ifn =
+          instance->functions();
+      for (size_t i = 0; i < physical_devices.size(); ++i) {
+        VkPhysicalDeviceProperties properties;
+        ifn.vkGetPhysicalDeviceProperties(physical_devices[i], &properties);
+        labels->push_back(fmt::format("{}: {}", i, properties.deviceName));
+        values->push_back(std::to_string(i));
+      }
+    }
+    auto* result = new std::vector<cvar::ConfigVarEditorInfo::Choice>();
+    result->reserve(labels->size());
+    for (size_t i = 0; i < labels->size(); ++i) {
+      result->push_back({(*labels)[i].c_str(), (*values)[i].c_str()});
+    }
+    return result;
+  }();
+  return *choices;
+}
+
+}  // namespace
+
 DEFINE_bool(
     vulkan_validation, false,
     "Enable the Vulkan validation layer (VK_LAYER_KHRONOS_validation). "
     "Messages will be written to the Xenia log if 'vulkan_log_debug_messages' "
     "is enabled, or to the OS debug output otherwise.",
     "Vulkan");
+DEFINE_CVar_DisplayName(vulkan_validation, "Vulkan validation layers");
 
-DEFINE_int32(vulkan_device, -1,
-             "Index of the preferred Vulkan physical device, or -1 to use any "
-             "compatible device.",
-             "Vulkan");
+DEFINE_int32_dynamic_choices(
+    vulkan_device, -1,
+    "Index of the preferred Vulkan physical device, or -1 to use any "
+    "compatible device.",
+    "Vulkan", "GPU device", &VulkanDeviceChoices);
 
 namespace xe {
 namespace ui {

@@ -32,10 +32,12 @@ DEFINE_bool(ignore_thread_affinities, true,
             "Ignores game-specified thread affinities.", "Kernel");
 
 #if 0
-DEFINE_int64(stack_size_multiplier_hack, 1,
-             "A hack for games with setjmp/longjmp issues.", "Kernel");
-DEFINE_int64(main_xthread_stack_size_multiplier_hack, 1,
-             "A hack for games with setjmp/longjmp issues.", "Kernel");
+DEFINE_int64_range(stack_size_multiplier_hack, 1,
+                   "A hack for games with setjmp/longjmp issues.", "Kernel",
+                   "Guest stack size multiplier", 1, 64);
+DEFINE_int64_range(main_xthread_stack_size_multiplier_hack, 1,
+                   "A hack for games with setjmp/longjmp issues.", "Kernel",
+                   "Main thread stack size multiplier", 1, 64);
 #endif
 
 namespace xe {
