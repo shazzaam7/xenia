@@ -48,7 +48,9 @@
 
 DEFINE_bool(profiler_dpi_scaling, false,
             "Apply window DPI scaling to the profiler.", "UI");
+DEFINE_CVar_DisplayName(profiler_dpi_scaling, "Profiler DPI scaling");
 DEFINE_bool(show_profiler, false, "Show profiling UI by default.", "UI");
+DEFINE_CVar_DisplayName(show_profiler, "Show profiler");
 
 namespace xe {
 

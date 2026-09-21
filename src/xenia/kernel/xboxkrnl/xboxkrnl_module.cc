@@ -18,6 +18,7 @@
 
 DEFINE_string(cl, "", "Specify additional command-line provided to guest.",
               "Kernel");
+DEFINE_CVar_DisplayName(cl, "Guest command line");
 
 DEFINE_bool(kernel_debug_monitor, false, "Enable debug monitor.", "Kernel");
 DEFINE_bool(kernel_cert_monitor, false, "Enable cert monitor.", "Kernel");

@@ -40,7 +40,7 @@ DEFINE_bool(
 // TODO(Triang3l): Make ROV the default when it's optimized better (for
 // instance, using static shader modifications to pass render target
 // parameters).
-DEFINE_string(
+DEFINE_string_choices(
     render_target_path_d3d12, "",
     "Render target emulation path to use on Direct3D 12.\n"
     "Use: [any, rtv, rov]\n"
@@ -63,7 +63,9 @@ DEFINE_string(
     "always RTV because the ROV path is much slower now, except for Intel "
     "GPUs, which have a bug in stencil testing that causes Xbox 360 Direct3D 9 "
     "clears not to work).",
-    "GPU");
+    "GPU", "Render target path (D3D12)", XE_CVAR_CHOICE("Automatic", ""),
+    XE_CVAR_CHOICE("RTV (host render targets)", "rtv"),
+    XE_CVAR_CHOICE("ROV (rasterizer-ordered views)", "rov"));
 
 namespace xe {
 namespace gpu {

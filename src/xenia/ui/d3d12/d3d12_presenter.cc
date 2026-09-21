@@ -28,6 +28,8 @@ DEFINE_bool(
     "it. On displays not supporting VRR, screen tearing may occur in certain "
     "cases.",
     "D3D12");
+DEFINE_CVar_DisplayName(d3d12_allow_variable_refresh_rate_and_tearing,
+                        "Allow variable refresh rate and tearing");
 
 namespace xe {
 namespace ui {
