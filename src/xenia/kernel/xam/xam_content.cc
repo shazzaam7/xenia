@@ -26,7 +26,7 @@
 #include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/xbox.h"
 
-DEFINE_int32(
+DEFINE_int32_choices(
     license_mask, 0,
     "Set license mask for activated content.\n"
     " 0 = No licenses enabled.\n"
@@ -34,7 +34,9 @@ DEFINE_int32(
     "     Xbox Live Arcade titles.\n"
     " -1 or 0xFFFFFFFF = All possible licenses enabled. Generally a\n"
     "                    bad idea, could lead to undefined behavior.",
-    "Content");
+    "Content", "License mask", XE_CVAR_CHOICE("No licenses enabled", "0"),
+    XE_CVAR_CHOICE("First license enabled", "1"),
+    XE_CVAR_CHOICE("All licenses enabled", "-1"));
 
 namespace xe {
 namespace kernel {

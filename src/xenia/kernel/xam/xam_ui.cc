@@ -31,6 +31,7 @@
 DEFINE_bool(storage_selection_dialog, false,
             "Show storage device selection dialog when the game requests it.",
             "UI");
+DEFINE_CVar_DisplayName(storage_selection_dialog, "Storage selection dialog");
 
 DECLARE_int32(license_mask);
 
