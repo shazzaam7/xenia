@@ -112,6 +112,14 @@ bool TraceDump::Setup() {
     XELOGE("Failed to setup emulator: {:08X}", result);
     return false;
   }
+  // No title is ever launched, so the per-title systems (audio,
+  // graphics - normally created from the merged title config) are set up
+  // explicitly with the global config.
+  result = emulator_->SetupTitleSystems();
+  if (XFAILED(result)) {
+    XELOGE("Failed to setup emulator phase B: {:08X}", result);
+    return false;
+  }
   graphics_system_ = emulator_->graphics_system();
   player_ = std::make_unique<TracePlayer>(graphics_system_);
   return true;

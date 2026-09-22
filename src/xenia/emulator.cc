@@ -218,6 +218,10 @@ void Emulator::Shutdown() {
   title_version_.clear();
   game_info_database_.reset();
   paused_ = false;
+  // No title is open after this: drop the previous title's per-game layer so
+  // the next Setup (and its early cvar reads, e.g. the cpu backend select)
+  // sees the pure global config instead of stale overrides.
+  config::ClearGameConfig();
 }
 
 X_STATUS Emulator::Setup(
@@ -272,8 +276,13 @@ X_STATUS Emulator::Setup(
 
   XELOGI("{}: Initializing Exports...", __func__);
   // Shared export resolver used to attach and query for HLE exports.
+  // Outlives the processor (torn down after it in Shutdown).
   export_resolver_ = std::make_unique<xe::cpu::ExportResolver>();
 
+  // Initialize the CPU. The kernel state below requires a processor (guest
+  // trampolines, module loading), so it is persistent and always created from
+  // the global config - unlike audio/graphics, which SetupTitleSystems creates
+  // per title after that title's game config has been loaded.
   std::unique_ptr<xe::cpu::backend::Backend> backend;
 #if XE_ARCH_AMD64
   if (cvars::cpu == "x64") {
@@ -304,25 +313,6 @@ X_STATUS Emulator::Setup(
   if (!processor_->Setup(std::move(backend))) {
     XELOGE("{}: Cannot initalize processor!", __func__);
     return X_STATUS_UNSUCCESSFUL;
-  }
-
-  XELOGI("{}: Initializing Audio...", __func__);
-  // Initialize the APU.
-  if (audio_system_factory_) {
-    audio_system_ = audio_system_factory_(processor_.get());
-    if (!audio_system_) {
-      XELOGE("{}: Cannot initalize audio_system!", __func__);
-      return X_STATUS_NOT_IMPLEMENTED;
-    }
-  }
-
-  XELOGI("{}: Initializing Graphics...", __func__);
-  // Initialize the GPU.
-  graphics_system_ =
-      graphics_system_factory_ ? graphics_system_factory_() : nullptr;
-  if (!graphics_system_) {
-    XELOGE("{}: Cannot initalize graphics_system!", __func__);
-    return X_STATUS_NOT_IMPLEMENTED;
   }
 
   // Input system persists across ResetTitle (see Shutdown), so drivers are
@@ -360,7 +350,9 @@ X_STATUS Emulator::Setup(
   patcher_ = std::make_unique<xe::patcher::Patcher>(storage_root_);
 
   XELOGI("{}: Initializing Kernel...", __func__);
-  // Shared kernel state.
+  // Shared kernel state. Requires the processor (guest trampolines, module
+  // loading), so it must never be created before the one above.
+  assert_true(processor_ != nullptr);
   kernel_state_ = std::make_unique<xe::kernel::KernelState>(this);
 #define LOAD_KERNEL_MODULE(t) \
   static_cast<void>(kernel_state_->LoadKernelModule<kernel::t>())
@@ -373,17 +365,62 @@ X_STATUS Emulator::Setup(
     LOAD_KERNEL_MODULE(xbdm::XbdmModule);
   }
 #undef LOAD_KERNEL_MODULE
+
+  // NOTE: plugin_loader_ is created in SetupTitleSystems, after the launching
+  // title's game config is loaded, so per-title allow_plugins overrides apply.
+  // Initialize emulator fallback exception handling last.
+  ExceptionHandler::Install(Emulator::ExceptionCallbackThunk, this);
+
+  // All persistent systems are up (failures above return early). Explicit
+  // success: on re-Setup after ResetTitle the input system already exists and
+  // its branch (the only one assigning result) is skipped.
+  result = X_STATUS_SUCCESS;
+  return result;
+}
+
+X_STATUS Emulator::SetupTitleSystems() {
+  // Tools (trace dump/viewer) call this explicitly without launching; launch
+  // flows call it once per title after LoadGameConfig. Never tear down live
+  // systems here: a partial state can only come from a failed attempt below,
+  // which already cleans up after itself.
+  if (audio_system_ || graphics_system_) {
+    return X_STATUS_SUCCESS;
+  }
+
+  XELOGI("{}: Initializing Audio...", __func__);
+  // Initialize the APU.
+  if (audio_system_factory_) {
+    audio_system_ = audio_system_factory_(processor_.get());
+    if (!audio_system_) {
+      XELOGE("{}: Cannot initalize audio_system!", __func__);
+      ShutdownTitleSystems();
+      return X_STATUS_NOT_IMPLEMENTED;
+    }
+  }
+
+  XELOGI("{}: Initializing Graphics...", __func__);
+  // Initialize the GPU. The provider (D3D12 device / Vulkan instance) is
+  // created fresh here, so provider-level cvars are re-read per title.
+  graphics_system_ =
+      graphics_system_factory_ ? graphics_system_factory_() : nullptr;
+  if (!graphics_system_) {
+    XELOGE("{}: Cannot initalize graphics_system!", __func__);
+    ShutdownTitleSystems();
+    return X_STATUS_NOT_IMPLEMENTED;
+  }
+
   plugin_loader_ = std::make_unique<xe::patcher::PluginLoader>(
       kernel_state_.get(), storage_root() / "plugins");
 
   XELOGI("{}: Starting graphics_system...", __func__);
   // Setup the core components.
-  result = graphics_system_->Setup(
+  X_STATUS result = graphics_system_->Setup(
       processor_.get(), kernel_state_.get(),
       display_window_ ? &display_window_->app_context() : nullptr,
       display_window_ != nullptr);
   if (result) {
     XELOGE("{}: Failed to setup graphics_system!", __func__);
+    ShutdownTitleSystems();
     return result;
   }
 
@@ -392,6 +429,7 @@ X_STATUS Emulator::Setup(
     result = audio_system_->Setup(kernel_state_.get());
     if (result) {
       XELOGE("{}: Failed to setup audio_system!", __func__);
+      ShutdownTitleSystems();
       return result;
     }
     audio_media_player_ = std::make_unique<apu::AudioMediaPlayer>(
@@ -399,10 +437,25 @@ X_STATUS Emulator::Setup(
     audio_media_player_->Setup();
   }
 
-  // Initialize emulator fallback exception handling last.
-  ExceptionHandler::Install(Emulator::ExceptionCallbackThunk, this);
+  // The graphics system (and its presenter) now exists: let the UI wire up
+  // the presenter synchronously before the title starts executing.
+  if (graphics_ready_hook_) {
+    graphics_ready_hook_();
+  }
+  return X_STATUS_SUCCESS;
+}
 
-  return result;
+void Emulator::ShutdownTitleSystems() {
+  if (graphics_system_) {
+    graphics_system_->Shutdown();
+  }
+  if (audio_system_) {
+    audio_system_->Shutdown();
+  }
+  graphics_system_.reset();
+  audio_system_.reset();
+  audio_media_player_.reset();
+  plugin_loader_.reset();
 }
 
 X_STATUS Emulator::TerminateTitle() {
@@ -1772,21 +1825,98 @@ static std::string format_version(xex2_version version) {
                      +version.build, +version.qfe);
 }
 
+X_STATUS Emulator::CompleteLaunchLoadModule(
+    const std::filesystem::path& path, const std::string_view module_path,
+    kernel::object_ref<kernel::UserModule>* module,
+    std::string* game_config_title_id) {
+  XELOGI("Loading module {}", module_path);
+  *module = kernel_state_->LoadUserModule(module_path);
+  if (!*module) {
+    XELOGE("Failed to load user module {}", path);
+    return X_STATUS_NOT_FOUND;
+  }
+
+  if (!(*module)->is_executable()) {
+    kernel_state_->UnloadUserModule(*module, false);
+    XELOGE("Failed to load user module {}", path);
+    return X_STATUS_NOT_SUPPORTED;
+  }
+
+  // The title ID selects the per-game config file. Loading it here - before
+  // the title systems are created - is what makes per-title backend
+  // selections (gpu/apu) and provider options take effect. (cpu is read in
+  // Setup and cannot be overridden per title.)
+  const uint32_t title_id = (*module)->title_id();
+  if (title_id) {
+    *game_config_title_id = fmt::format("{:08X}", title_id);
+    config::LoadGameConfig(*game_config_title_id);
+  }
+  return X_STATUS_SUCCESS;
+}
+
 X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                                   const std::string_view module_path) {
-  // Making changes to the UI (setting the icon) and executing game config
-  // load callbacks which expect to be called from the UI thread.
-  // If not on UI thread, dispatch to it synchronously (without holding the
-  // launch lock, so the UI-thread half below can take it).
+  {
+    std::lock_guard<std::mutex> launch_lock(launch_mutex_);
+
+    // Reset state (the icon lives in Phase 2 - UI object).
+    title_id_ = std::nullopt;
+    title_name_ = "";
+    title_version_ = "";
+  }
+
+  // Phase 1a runs on the UI thread, as before the Setup split: loading the
+  // module touches the kernel object table, which UI flows (profiles, content
+  // browsing) also touch, while no guest threads exist yet either way.
+  kernel::object_ref<kernel::UserModule> module;
+  std::string game_config_title_id;
+  X_STATUS result = X_STATUS_UNSUCCESSFUL;
+  auto load_step = [this, &path, module_path, &module, &game_config_title_id,
+                    &result]() {
+    std::lock_guard<std::mutex> launch_lock(launch_mutex_);
+    result = CompleteLaunchLoadModule(path, module_path, &module,
+                                      &game_config_title_id);
+  };
   if (!display_window_->app_context().IsInUIThread()) {
-    X_STATUS result = X_STATUS_UNSUCCESSFUL;
-    display_window_->app_context().CallInUIThreadSynchronous(
-        [this, &path, &module_path, &result]() {
-          result = CompleteLaunch(path, module_path);
-        });
+    display_window_->app_context().CallInUIThreadSynchronous(load_step);
+  } else {
+    load_step();
+  }
+  if (XFAILED(result)) {
     return result;
   }
 
+  // Phase 1b runs on the calling thread (a worker in all launch flows - the
+  // same thread class that runs Setup at boot): create the title systems
+  // with the merged configuration. Device creation stays off the UI thread.
+  {
+    std::lock_guard<std::mutex> launch_lock(launch_mutex_);
+    result = SetupTitleSystems();
+    if (XFAILED(result)) {
+      kernel_state_->UnloadUserModule(module, false);
+      return result;
+    }
+  }
+
+  // Phase 2 is the pre-existing remainder (icons, database, execution) and
+  // must run on the UI thread, as before. The lock is released above and
+  // re-taken below so the UI half can take it.
+  if (!display_window_->app_context().IsInUIThread()) {
+    X_STATUS result = X_STATUS_UNSUCCESSFUL;
+    display_window_->app_context().CallInUIThreadSynchronous(
+        [this, &path, module_path, module, &game_config_title_id, &result]() {
+          result = CompleteLaunchPhase2(path, module_path, module,
+                                        game_config_title_id);
+        });
+    return result;
+  }
+  return CompleteLaunchPhase2(path, module_path, module, game_config_title_id);
+}
+
+X_STATUS Emulator::CompleteLaunchPhase2(
+    const std::filesystem::path& path, const std::string_view module_path,
+    const kernel::object_ref<kernel::UserModule>& module,
+    const std::string& game_config_title_id) {
   std::lock_guard<std::mutex> launch_lock(launch_mutex_);
 
   // Setup NullDevices for raw HDD partition accesses
@@ -1808,28 +1938,13 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     file_system_->RegisterDevice(std::move(null_device));
   }
 
-  // Reset state.
-  title_id_ = std::nullopt;
-  title_name_ = "";
-  title_version_ = "";
   display_window_->SetIcon(nullptr, 0);
 
   // Allow xam to request module loads.
   auto xam = kernel_state()->GetKernelModule<kernel::xam::XamModule>("xam.xex");
 
-  XELOGI("Loading module {}", module_path);
-  auto module = kernel_state_->LoadUserModule(module_path);
-  if (!module) {
-    XELOGE("Failed to load user module {}", path);
-    return X_STATUS_NOT_FOUND;
-  }
-
-  if (!module->is_executable()) {
-    kernel_state_->UnloadUserModule(module, false);
-    XELOGE("Failed to load user module {}", path);
-    return X_STATUS_NOT_SUPPORTED;
-  }
-
+  // The module was loaded in Phase 1 (which also loaded the title's game
+  // config and created the title systems from it).
   X_RESULT result = kernel_state_->ApplyTitleUpdate(module);
   if (XFAILED(result)) {
     XELOGE("Failed to apply title update! Cannot run module {}", path);
@@ -1865,19 +1980,20 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 
   // Try and load the resource database (xex only).
   if (module->title_id()) {
-    auto title_id = fmt::format("{:08X}", module->title_id());
-
-    // Load the per-game configuration file and make sure updates are handled
-    // by the callbacks.
-    config::LoadGameConfig(title_id);
-    assert_true(game_config_load_callback_loop_next_index_ == SIZE_MAX);
-    game_config_load_callback_loop_next_index_ = 0;
-    while (game_config_load_callback_loop_next_index_ <
-           game_config_load_callbacks_.size()) {
-      game_config_load_callbacks_[game_config_load_callback_loop_next_index_++]
-          ->PostGameConfigLoad();
+    // The file itself was loaded in Phase 1, before the title systems were
+    // created. Here only the load callbacks run: the graphics system and its
+    // presenter now exist, which the display callback requires.
+    if (!game_config_title_id.empty()) {
+      assert_true(game_config_load_callback_loop_next_index_ == SIZE_MAX);
+      game_config_load_callback_loop_next_index_ = 0;
+      while (game_config_load_callback_loop_next_index_ <
+             game_config_load_callbacks_.size()) {
+        game_config_load_callbacks_
+            [game_config_load_callback_loop_next_index_++]
+                ->PostGameConfigLoad();
+      }
+      game_config_load_callback_loop_next_index_ = SIZE_MAX;
     }
-    game_config_load_callback_loop_next_index_ = SIZE_MAX;
 
     const auto db = kernel_state_->module_xdbf(module);
 

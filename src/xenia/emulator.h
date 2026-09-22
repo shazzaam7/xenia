@@ -180,8 +180,10 @@ class Emulator {
   // Initializes the emulator and configures all components.
   // The given window is used for display and the provided functions are used
   // to create subsystems as required.
-  // Once this function returns a game can be launched using one of the Launch
-  // functions.
+  // Persistent systems (memory, processor, kernel, filesystem, input) are
+  // created here from the global config; audio and graphics are NOT created
+  // here - see SetupTitleSystems. Once this function returns a game can be
+  // launched using one of the Launch functions.
   X_STATUS Setup(
       ui::Window* display_window, ui::ImGuiDrawer* imgui_drawer,
       bool require_cpu_backend,
@@ -192,11 +194,37 @@ class Emulator {
       std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
           input_driver_factory);
 
+  // Creates the per-title systems (audio, graphics) after the launching
+  // title's game config has been loaded, so per-title overrides of backend
+  // selections (gpu/apu) and provider options take effect. The processor is
+  // persistent (the kernel state depends on it) and is not touched here.
+  // Runs on the calling thread (a worker in every launch flow, like Setup at
+  // boot) and invokes the graphics-ready hook, if set, before returning. Safe
+  // to call when already set up (no-op). Tools that need the graphics system
+  // without launching a title (trace dump/viewer) call this explicitly after
+  // Setup.
+  X_STATUS SetupTitleSystems();
+
+  // Synchronous hook invoked at the end of SetupTitleSystems on the calling
+  // thread, for wiring UI-owned objects (the presenter) to the fresh graphics
+  // system. The hook runs on a worker thread in launch flows, so it must
+  // marshal to the UI thread itself when touching UI objects. Unset for
+  // headless use.
+  void SetGraphicsReadyHook(std::function<void()> hook) {
+    graphics_ready_hook_ = std::move(hook);
+  }
+
   // Terminates the currently running title.
   X_STATUS TerminateTitle();
 
   // Tears down all subsystems. Called by the destructor and by ResetTitle.
   void Shutdown();
+
+  // Tears down only the SetupTitleSystems systems (audio, graphics, media
+  // player, plugin loader), leaving the persistent Phase A systems (memory,
+  // processor, kernel, VFS) intact. Used to clean up after a failed
+  // SetupTitleSystems.
+  void ShutdownTitleSystems();
 
   // Mounts scratch, cache, and devkit drives based on cvars.
   void MountStandardDrives();
@@ -371,6 +399,20 @@ class Emulator {
 
   X_STATUS CompleteLaunch(const std::filesystem::path& path,
                           const std::string_view module_path);
+  // UI-thread remainder of CompleteLaunch: runs after Phase 1 (module load,
+  // game config, title systems) with the loaded module. Must only be called
+  // on the UI thread.
+  X_STATUS CompleteLaunchPhase2(
+      const std::filesystem::path& path, const std::string_view module_path,
+      const kernel::object_ref<kernel::UserModule>& module,
+      const std::string& game_config_title_id);
+  // Loads the module to discover the title and loads its game config.
+  // Runs on the UI thread (see CompleteLaunch); the caller holds no locks
+  // across the call when marshaling. Must only be called on the UI thread.
+  X_STATUS CompleteLaunchLoadModule(
+      const std::filesystem::path& path, const std::string_view module_path,
+      kernel::object_ref<kernel::UserModule>* module,
+      std::string* game_config_title_id);
 
   std::filesystem::path command_line_;
   std::filesystem::path storage_root_;
@@ -428,6 +470,7 @@ class Emulator {
       graphics_system_factory_;
   std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
       input_driver_factory_;
+  std::function<void()> graphics_ready_hook_;
 };
 
 }  // namespace xe
