@@ -648,8 +648,9 @@ void EmulatorApp::EmulatorThread() {
     return;
   }
 
-  app_context().CallInUIThread(
-      [this]() { emulator_window_->SetupGraphicsSystemPresenterPainting(); });
+  // No presenter setup here: title systems (and their graphics system)
+  // only exist once a title launches, and the graphics-ready hook wires the
+  // presenter then (see EmulatorWindow::OnEmulatorInitialized).
 
   const auto fs = emulator_->file_system();
 

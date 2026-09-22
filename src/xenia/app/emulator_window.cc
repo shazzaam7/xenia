@@ -323,6 +323,20 @@ void EmulatorWindow::OnEmulatorInitialized() {
     }
   }
 
+  // Title systems (audio, graphics) are created per title after
+  // its game config loads. Wire the fresh graphics system to the window's
+  // presenter the moment it exists - SetupTitleSystems invokes this on its
+  // calling (worker) thread, so marshal to the UI thread for the UI-owned
+  // wiring.
+  emulator_->SetGraphicsReadyHook([this]() {
+    if (app_context_.IsInUIThread()) {
+      SetupGraphicsSystemPresenterPainting();
+    } else {
+      app_context_.CallInUIThreadSynchronous(
+          [this]() { SetupGraphicsSystemPresenterPainting(); });
+    }
+  });
+
   emulator_initialized_ = true;
   window_->SetMainMenuEnabled(true);
   // When the user can see that the emulator isn't initializing anymore (the
@@ -1436,7 +1450,9 @@ bool EmulatorWindow::StopTitleFromGuestThread(
       return;
     }
     // Title-to-title relaunch: restore the captured loader data into the
-    // fresh kernel, then launch exactly like RunTitle does.
+    // fresh kernel, then launch exactly like RunTitle does. The presenter is
+    // wired by the graphics-ready hook once the title systems exist (see
+    // OnEmulatorInitialized), so there is nothing to attach here.
     auto xam =
         emulator_->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
             "xam.xex");
@@ -1445,8 +1461,6 @@ bool EmulatorWindow::StopTitleFromGuestThread(
     loader_data.launch_path = launch_path;
     loader_data.launch_flags = launch_flags;
     loader_data.launch_data = std::move(launch_data);
-    app_context_.CallInUIThreadSynchronous(
-        [this]() { SetupGraphicsSystemPresenterPainting(); });
     std::filesystem::path target = xe::to_path(host_path);
     auto result = emulator_->LaunchPath(target);
     if (XSUCCEEDED(result)) {
@@ -1975,6 +1989,10 @@ void EmulatorWindow::CpuBreakIntoDebugger() {
     return;
   }
   auto processor = emulator()->processor();
+  // Always present after Setup; kept as belt and braces.
+  if (!processor) {
+    return;
+  }
   if (processor->execution_state() == cpu::ExecutionState::kRunning) {
     // Currently running, so interrupt (and show the debugger).
     processor->Pause();
@@ -1987,11 +2005,17 @@ void EmulatorWindow::CpuBreakIntoDebugger() {
 void EmulatorWindow::CpuBreakIntoHostDebugger() { xe::debugging::Break(); }
 
 void EmulatorWindow::GpuTraceFrame() {
-  emulator()->graphics_system()->RequestFrameTrace();
+  // Title systems only exist while a title is loaded.
+  if (auto* graphics_system = emulator()->graphics_system()) {
+    graphics_system->RequestFrameTrace();
+  }
 }
 
 void EmulatorWindow::GpuClearCaches() {
-  emulator()->graphics_system()->ClearCaches();
+  // Title systems only exist while a title is loaded.
+  if (auto* graphics_system = emulator()->graphics_system()) {
+    graphics_system->ClearCaches();
+  }
 }
 
 void EmulatorWindow::SetFullscreen(bool fullscreen_) {
@@ -2737,8 +2761,9 @@ xe::X_STATUS EmulatorWindow::RunTitle(
         });
         return;
       }
-      app_context_.CallInUIThreadSynchronous(
-          [this]() { SetupGraphicsSystemPresenterPainting(); });
+      // The presenter is wired by the graphics-ready hook once the title
+      // systems exist (see OnEmulatorInitialized), so there is nothing to
+      // attach here.
       auto result = emulator->LaunchPath(abs_path);
       app_context_.CallInUIThread([this, result, abs_path, path_to_file]() {
         FinishTitleLaunch(path_to_file, abs_path, result);
@@ -2747,12 +2772,11 @@ xe::X_STATUS EmulatorWindow::RunTitle(
     return X_STATUS_SUCCESS;
   }
 
-  // (Re-)attach the presenter before launching: after a Stop the painting was
-  // shut down and the fresh graphics system has no surface yet. Without this
-  // the game boots with no presenter and the window keeps showing the
-  // previous title's last frame. Harmless on the very first launch.
-  SetupGraphicsSystemPresenterPainting();
-
+  // The presenter is wired by the graphics-ready hook once the title systems
+  // exist (see OnEmulatorInitialized): after a Stop the painting was shut down,
+  // and the fresh graphics system gets its surface there. Without it the game
+  // would boot with no presenter and the window would keep showing the
+  // previous title's last frame.
   auto result = emulator_->LaunchPath(abs_path);
 
   FinishTitleLaunch(path_to_file, abs_path, result);
