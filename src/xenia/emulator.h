@@ -10,6 +10,7 @@
 #ifndef XENIA_EMULATOR_H_
 #define XENIA_EMULATOR_H_
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -205,6 +206,12 @@ class Emulator {
   // Setup.
   X_STATUS SetupTitleSystems();
 
+  // gpu/apu cvar values the live title systems were built with; empty before
+  // first SetupTitleSystems. Used to detect a backend change driven by
+  // per-game overrides so the next launch can route through a fresh process.
+  const std::string& active_gpu_backend() const { return active_gpu_backend_; }
+  const std::string& active_apu_backend() const { return active_apu_backend_; }
+
   // Synchronous hook invoked at the end of SetupTitleSystems on the calling
   // thread, for wiring UI-owned objects (the presenter) to the fresh graphics
   // system. The hook runs on a worker thread in launch flows, so it must
@@ -235,6 +242,14 @@ class Emulator {
   // re-initialized (in that case no title is open and subsystems are torn
   // down - do not launch).
   X_STATUS ResetTitle();
+
+  // Full in-process relaunch: terminates threads, Shutdown(), Setup(), then
+  // launches with new params. Must be called from a non-guest, non-UI thread.
+  // Holds launch_mutex_ across the whole sequence so concurrent teardown
+  // waits. Preserves the 3-attempt Setup retry from ResetTitle.
+  void RelaunchTitle(const std::string& host_path,
+                     const std::string& launch_path, uint32_t launch_flags,
+                     std::vector<uint8_t> launch_data);
 
   // Clears title state after a guest-initiated exit (XamLoaderTerminateTitle
   // and friends), where the calling guest thread dies inside
@@ -302,6 +317,39 @@ class Emulator {
 
   struct ContentInstallEntry {
     ContentInstallEntry(std::filesystem::path path) : path_(path) {};
+    // std::atomic members are neither copyable nor movable; move explicitly
+    // (vector growth) by loading the state. Copy is already impossible
+    // (unique_ptr icon_).
+    ContentInstallEntry(ContentInstallEntry&& o) noexcept
+        : name_(std::move(o.name_)),
+          path_(std::move(o.path_)),
+          filename_(std::move(o.filename_)),
+          data_installation_path_(std::move(o.data_installation_path_)),
+          header_installation_path_(std::move(o.header_installation_path_)),
+          content_size_(o.content_size_),
+          currently_installed_size_(o.currently_installed_size_),
+          content_type_(o.content_type_),
+          installation_state_(o.installation_state_.load()),
+          installation_result_(o.installation_result_),
+          installation_error_message_(std::move(o.installation_error_message_)),
+          icon_(std::move(o.icon_)),
+          icon_bytes_(std::move(o.icon_bytes_)) {}
+    ContentInstallEntry(const ContentInstallEntry&) = delete;
+    ContentInstallEntry& operator=(const ContentInstallEntry&) = delete;
+    ContentInstallEntry& operator=(ContentInstallEntry&&) = delete;
+
+    // Terminal-state stores for worker threads. Result/message are stored
+    // before the state: progress polling reads the (atomic) state first and
+    // only touches result/message once a terminal state is observed.
+    void SetFailed(X_STATUS result, std::string message) {
+      installation_result_ = result;
+      installation_error_message_ = std::move(message);
+      installation_state_ = InstallState::failed;
+    }
+    void SetInstalled() {
+      currently_installed_size_ = content_size_;
+      installation_state_ = InstallState::installed;
+    }
 
     std::string name_{};
     std::filesystem::path path_;
@@ -310,10 +358,15 @@ class Emulator {
     std::filesystem::path header_installation_path_;
 
     uint64_t content_size_ = 0;
+    // Updated by worker threads (including deep by-ref progress writes inside
+    // the content manager, which rule out std::atomic without VFS signature
+    // churn) while the progress dialogs poll on the UI thread. 8-byte aligned
+    // and written by a single worker per entry; the atomic state above gates
+    // every read of the fields below it.
     uint64_t currently_installed_size_ = 0;
     XContentType content_type_{};
 
-    InstallState installation_state_{};
+    std::atomic<InstallState> installation_state_{};
     X_STATUS installation_result_{};
     std::string installation_error_message_{};
 
@@ -369,6 +422,27 @@ class Emulator {
   xe::Delegate<> on_patch_apply;
   xe::Delegate<> on_terminate;
   xe::Delegate<> on_exit;
+
+  // Fired before Shutdown() during relaunch, while subsystems are still alive.
+  // The UI uses this to detach the presenter before GPU teardown. ResetTitle
+  // and RelaunchTitle retry Setup in a loop with the flag still set, so this
+  // fires once per Shutdown() call — listeners must be idempotent.
+  xe::Delegate<> on_before_shutdown;
+
+  // Called when a title-to-title launch or dashboard exit requests a fresh
+  // process instead of an in-process relaunch. Parameters: host_path (empty
+  // = return to library / dashboard), launch_module, launch_flags,
+  // launch_data. The callback should spawn a new process with the given
+  // parameters.
+  using LaunchNewTitleCallback =
+      std::function<void(const std::string&, const std::string&, uint32_t,
+                         const std::vector<uint8_t>&)>;
+  LaunchNewTitleCallback on_launch_new_title() const {
+    return on_launch_new_title_;
+  }
+  void set_on_launch_new_title(LaunchNewTitleCallback callback) {
+    on_launch_new_title_ = std::move(callback);
+  }
 
   // Called when the game requests an exit to dashboard from a guest thread.
   // Carries the captured loader data for an optional title-to-title relaunch
@@ -456,7 +530,9 @@ class Emulator {
 
   bool paused_;
   bool restoring_;
-  bool relaunching_ = false;
+  // Written under launch_mutex_ but also polled lock-free from WaitUntilExit,
+  // where it gates thread lifetime — hence atomic, unlike restoring_.
+  std::atomic<bool> relaunching_{false};
   // Held across CompleteLaunch so title teardown waits for it to finish.
   std::mutex launch_mutex_;
   threading::Fence restore_fence_;  // Fired on restore finish.
@@ -471,6 +547,15 @@ class Emulator {
   std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
       input_driver_factory_;
   std::function<void()> graphics_ready_hook_;
+  // Backends the live title systems were built with. Empty until the first
+  // SetupTitleSystems. Compared against cvars::gpu/apu after per-game
+  // overrides to detect a backend switch that needs a fresh process.
+  std::string active_gpu_backend_;
+  std::string active_apu_backend_;
+  // Last successfully launched host path. Fallback for RelaunchTitle when
+  // host_path is empty (command-line launch rather than loader-driven).
+  std::filesystem::path last_launch_path_;
+  LaunchNewTitleCallback on_launch_new_title_;
 };
 
 }  // namespace xe
