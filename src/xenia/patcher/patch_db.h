@@ -11,9 +11,13 @@
 #define XENIA_PATCH_DB_H_
 
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <regex>
+#include <string>
+#include <utility>
+#include <vector>
 
 #if defined(__clang__)
 #pragma clang diagnostic push
@@ -106,6 +110,17 @@ class PatchDB {
   // Reads one patch file without needing a database instance (the editor UI
   // uses this to show entries regardless of the apply_patches master toggle).
   static PatchFileEntry ReadPatchFile(const std::filesystem::path& file_path);
+
+  // Rewrites the is_enabled flags of the given [[patch]] table indices,
+  // preserving every other byte. desired maps table index -> new value;
+  // tables are counted in file order, which is the order ReadPatchFile
+  // parses them in. Fails without touching the file when the structure is
+  // not as expected. With make_backup, the pre-write file is kept next to
+  // the original with a .bak suffix.
+  static bool WriteEnabledFlags(
+      const std::filesystem::path& path,
+      const std::vector<std::pair<size_t, bool>>& desired,
+      bool make_backup = true);
 
   std::vector<PatchFileEntry> GetTitlePatches(
       const uint32_t title_id, const std::optional<uint64_t> hash);
