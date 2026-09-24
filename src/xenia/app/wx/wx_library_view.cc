@@ -61,6 +61,7 @@ enum : int {
   kIdMenuRemove,
   kIdMenuContent,
   kIdMenuConfig,
+  kIdMenuPatches,
 };
 
 bool MatchesFilter(const GameEntry& entry, const std::string& filter) {
@@ -155,7 +156,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnProfile, this, kIdProfile);
-  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuConfig);
+  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuPatches);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
   grid_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
@@ -339,6 +340,7 @@ void WxLibraryView::ShowContext(wxListCtrl* view, const wxPoint& pos) {
   }
   menu.AppendSeparator();
   menu.Append(kIdMenuConfig, "Game Config...");
+  menu.Append(kIdMenuPatches, "Patches...");
   menu.AppendSeparator();
   menu.Append(kIdMenuFolder, "Show in Folder");
   menu.Append(kIdMenuRemove, "Remove");
@@ -441,6 +443,9 @@ void WxLibraryView::OnMenu(wxCommandEvent& event) {
       break;
     case kIdMenuConfig:
       delegate_->OnGameConfig(menu_index_);
+      break;
+    case kIdMenuPatches:
+      delegate_->OnPatches(menu_index_);
       break;
     default:
       break;
