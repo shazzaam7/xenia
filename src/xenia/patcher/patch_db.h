@@ -103,34 +103,36 @@ class PatchDB {
 
   void LoadPatches();
 
-  PatchFileEntry ReadPatchFile(const std::filesystem::path& file_path) const;
+  // Reads one patch file without needing a database instance (the editor UI
+  // uses this to show entries regardless of the apply_patches master toggle).
+  static PatchFileEntry ReadPatchFile(const std::filesystem::path& file_path);
 
   std::vector<PatchFileEntry> GetTitlePatches(
       const uint32_t title_id, const std::optional<uint64_t> hash);
   std::vector<PatchFileEntry>& GetAllPatches() { return loaded_patches_; }
 
  private:
-  void ReadHashes(PatchFileEntry& patch_entry,
-                  const toml::node* patch_toml_fields) const;
-  void ReadPatchHeader(PatchInfoEntry& patch_info,
-                       const toml::table* patch_fields) const;
-  bool ReadPatchData(std::vector<PatchDataEntry>& patch_data,
-                     const std::pair<std::string, PatchData> data_type,
-                     const toml::table* patch_fields) const;
+  static void ReadHashes(PatchFileEntry& patch_entry,
+                         const toml::node* patch_toml_fields);
+  static void ReadPatchHeader(PatchInfoEntry& patch_info,
+                              const toml::table* patch_fields);
+  static bool ReadPatchData(std::vector<PatchDataEntry>& patch_data,
+                            const std::pair<std::string, PatchData> data_type,
+                            const toml::table* patch_fields);
 
   inline static const std::regex patch_filename_regex_ =
       std::regex("^[A-Fa-f0-9]{8}.*\\.patch\\.toml$");
 
-  const std::map<std::string, PatchData> patch_data_types_size_ = {
-      {"string", PatchData(0, PatchDataType::kString)},
-      {"u16string", PatchData(0, PatchDataType::kU16String)},
-      {"array", PatchData(0, PatchDataType::kByteArray)},
-      {"f64", PatchData(sizeof(uint64_t), PatchDataType::kF64)},
-      {"f32", PatchData(sizeof(uint32_t), PatchDataType::kF32)},
-      {"be64", PatchData(sizeof(uint64_t), PatchDataType::kBE64)},
-      {"be32", PatchData(sizeof(uint32_t), PatchDataType::kBE32)},
-      {"be16", PatchData(sizeof(uint16_t), PatchDataType::kBE16)},
-      {"be8", PatchData(sizeof(uint8_t), PatchDataType::kBE8)}};
+  inline static const std::map<std::string, PatchData> patch_data_types_size_ =
+      {{"string", PatchData(0, PatchDataType::kString)},
+       {"u16string", PatchData(0, PatchDataType::kU16String)},
+       {"array", PatchData(0, PatchDataType::kByteArray)},
+       {"f64", PatchData(sizeof(uint64_t), PatchDataType::kF64)},
+       {"f32", PatchData(sizeof(uint32_t), PatchDataType::kF32)},
+       {"be64", PatchData(sizeof(uint64_t), PatchDataType::kBE64)},
+       {"be32", PatchData(sizeof(uint32_t), PatchDataType::kBE32)},
+       {"be16", PatchData(sizeof(uint16_t), PatchDataType::kBE16)},
+       {"be8", PatchData(sizeof(uint8_t), PatchDataType::kBE8)}};
 
   std::vector<PatchFileEntry> loaded_patches_;
   std::filesystem::path patches_root_;
