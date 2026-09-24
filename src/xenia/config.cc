@@ -440,6 +440,16 @@ void LoadGameConfig(const std::string_view title_id) {
   ClearGameConfig();
 }
 
+void ReloadConfig() {
+  if (config_path.empty()) {
+    return;
+  }
+  if (std::filesystem::exists(config_path)) {
+    ReadConfig(config_path, false);
+    XELOGI("Reloaded config from: {}", config_path);
+  }
+}
+
 bool SaveGameConfigSparse(const std::string& title_id,
                           const std::string& title_name,
                           const std::map<std::string, std::string>* reasons) {
