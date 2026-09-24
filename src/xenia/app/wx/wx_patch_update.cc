@@ -13,6 +13,7 @@
 
 #include "xenia/app/wx/wx_patch_update.h"
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -51,6 +52,44 @@ struct RemoteFile {
   std::string name;
   std::string download_url;
 };
+
+// Percent-encodes bytes outside the URL-allowed set, leaving existing
+// %XX escapes intact. GitHub pre-encodes ASCII (spaces etc.) but leaves
+// non-ASCII UTF-8 bytes raw, which libcurl will not encode itself.
+std::string EncodeUrl(const std::string& url) {
+  auto allowed = [](unsigned char c) {
+    if (c <= 0x20 || c >= 0x7F) {
+      return false;
+    }
+    switch (c) {
+      case '<':
+      case '>':
+      case '"':
+      case '{':
+      case '}':
+      case '|':
+      case '\\':
+      case '^':
+      case '`':
+        return false;
+      default:
+        return true;
+    }
+  };
+  static const char* hex = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(url.size());
+  for (unsigned char c : url) {
+    if (allowed(c)) {
+      out += char(c);
+    } else {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 15];
+    }
+  }
+  return out;
+}
 
 // One GitHub API call for the whole directory listing.
 bool ListRemotePatches(std::vector<RemoteFile>* out) {
@@ -204,6 +243,7 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
         path, std::filesystem::path(path.string() + ".bak"),
         std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) {
+      XELOGW("PatchUpdate: {}: backup failed ({})", remote.name, ec.message());
       std::lock_guard<std::mutex> lock(progress->mutex);
       ++progress->failed;
       return;
@@ -219,6 +259,7 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
         std::filesystem::copy_options::overwrite_existing, restore_ec);
   };
   if (!WriteAllBytes(path, bytes)) {
+    XELOGW("PatchUpdate: {}: write failed", remote.name);
     restore_backup();
     std::lock_guard<std::mutex> lock(progress->mutex);
     ++progress->failed;
@@ -229,6 +270,8 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
     bool ok = false;
     std::tie(ok, preserved) = MergeLocalEnabledFlags(local, path);
     if (!ok) {
+      XELOGW("PatchUpdate: {}: toggle merge failed, restored .bak",
+             remote.name);
       restore_backup();
       std::lock_guard<std::mutex> lock(progress->mutex);
       ++progress->failed;
@@ -245,6 +288,9 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
 void UpdateGamePatchesAsync(const std::filesystem::path& patches_dir,
                             std::shared_ptr<PatchUpdateProgress> progress) {
   std::thread([patches_dir, progress]() {
+    const auto started = std::chrono::steady_clock::now();
+    XELOGI("PatchUpdate: fetching patch list for {}",
+           xe::path_to_utf8(patches_dir));
     std::vector<RemoteFile> files;
     if (!ListRemotePatches(&files)) {
       std::lock_guard<std::mutex> lock(progress->mutex);
@@ -258,29 +304,64 @@ void UpdateGamePatchesAsync(const std::filesystem::path& patches_dir,
       std::lock_guard<std::mutex> lock(progress->mutex);
       progress->total = files.size();
     }
+    XELOGI("PatchUpdate: {} files listed", files.size());
     std::error_code ec;
     std::filesystem::create_directories(patches_dir, ec);
-    for (const auto& file : files) {
-      if (progress->cancelled.load()) {
-        break;
-      }
-      {
-        std::lock_guard<std::mutex> lock(progress->mutex);
-        progress->current = file.name;
-      }
-      std::string bytes;
-      if (!HttpGet(file.download_url, &bytes)) {
-        std::lock_guard<std::mutex> lock(progress->mutex);
-        ++progress->failed;
-        ++progress->done;
-        continue;
-      }
-      UpdateOneFile(patches_dir, file, bytes, progress);
-      std::lock_guard<std::mutex> lock(progress->mutex);
-      ++progress->done;
+    // Fixed worker pool over a shared file queue: 8 parallel transfers,
+    // each with its own connection-warm libcurl handle. All shared state
+    // stays behind progress->mutex; files never overlap.
+    const size_t worker_count =
+        std::max<size_t>(1, std::min<size_t>(8, files.size()));
+    std::atomic<size_t> next{0};
+    std::vector<std::thread> pool;
+    pool.reserve(worker_count);
+    for (size_t w = 0; w < worker_count; ++w) {
+      pool.emplace_back([&]() {
+        for (;;) {
+          const size_t i = next.fetch_add(1);
+          if (i >= files.size() || progress->cancelled.load()) {
+            break;
+          }
+          {
+            std::lock_guard<std::mutex> lock(progress->mutex);
+            progress->current = files[i].name;
+          }
+          std::string bytes;
+          const std::string url = EncodeUrl(files[i].download_url);
+          if (!HttpGet(url, &bytes)) {
+            XELOGW("PatchUpdate: {}: download failed ({})", files[i].name, url);
+            std::lock_guard<std::mutex> lock(progress->mutex);
+            ++progress->failed;
+            ++progress->done;
+            continue;
+          }
+          UpdateOneFile(patches_dir, files[i], bytes, progress);
+          std::lock_guard<std::mutex> lock(progress->mutex);
+          ++progress->done;
+        }
+      });
     }
-    std::lock_guard<std::mutex> lock(progress->mutex);
-    progress->finished = true;
+    for (auto& worker : pool) {
+      worker.join();
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - started);
+    size_t updated, unchanged, failed, preserved;
+    bool cancelled;
+    {
+      std::lock_guard<std::mutex> lock(progress->mutex);
+      progress->finished = true;
+      updated = progress->updated;
+      unchanged = progress->unchanged;
+      failed = progress->failed;
+      preserved = progress->preserved;
+      cancelled = progress->cancelled.load();
+    }
+    XELOGI(
+        "PatchUpdate: finished in {}s: {} updated, {} unchanged, {} "
+        "failed, {} toggles kept{}",
+        elapsed.count(), updated, unchanged, failed, preserved,
+        cancelled ? " (cancelled)" : "");
   }).detach();
 }
 
