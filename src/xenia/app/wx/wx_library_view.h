@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include <wx/bitmap.h>
 #include <wx/event.h>
 #include <wx/imaglist.h>
 #include <wx/listctrl.h>
@@ -22,6 +23,7 @@
 #include <wx/srchctrl.h>
 #include <wx/stattext.h>
 
+#include "xenia/app/wx/wx_compat_db.h"
 #include "xenia/app/wx/wx_game_model.h"
 
 namespace xe {
@@ -29,7 +31,7 @@ namespace app {
 namespace wx_ui {
 
 // Display-only game library: one model, wxListCtrl table + grid, search
-// filter, title/last-played sort. Importing and persistence live in
+// filter, title/last-played/status sort. Importing and persistence live in
 // wx_library_store / wx_game_scan / wx_game_art; booting lives with the
 // owner (EmulatorWindow) via Delegate.
 class WxLibraryView : public wxPanel {
@@ -47,6 +49,10 @@ class WxLibraryView : public wxPanel {
     virtual void OnGameConfig(size_t index) = 0;
     // Per-title patch editor (the game library's right-click entry).
     virtual void OnPatches(size_t index) = 0;
+    // Open the compatibility report for a title with one.
+    virtual void OnViewCompatReport(size_t index) = 0;
+    // Open an issue search for a title without a report.
+    virtual void OnSearchCompatIssues(size_t index) = 0;
   };
 
   WxLibraryView(wxWindow* parent, Delegate* delegate,
@@ -58,6 +64,7 @@ class WxLibraryView : public wxPanel {
  private:
   enum : int {
     kColIcon = 0,
+    kColStatus,
     kColTitleId,
     kColMediaId,
     kColTitle,
@@ -68,7 +75,8 @@ class WxLibraryView : public wxPanel {
   void RebuildIcons();
   void Populate();
   void ApplySort();
-  int IconFor(const GameEntry& entry);
+  void IconFor(const GameEntry& entry, int* small_out, int* big_out);
+  CompatRating EntryRating(size_t index) const;
   std::string LastPlayedLabel(std::time_t t) const;
   size_t ViewSelection(wxListCtrl* view) const;
   void BootFrom(wxListCtrl* view);
@@ -79,6 +87,8 @@ class WxLibraryView : public wxPanel {
   void OnSearchCancel(wxCommandEvent& event);
   void OnMode(wxCommandEvent& event);
   void OnSortColumn(wxListEvent& event);
+  void OnHoverTable(wxMouseEvent& event);
+  void OnHoverGrid(wxMouseEvent& event);
   void OnActivate(wxListEvent& event);
   void OnContextTable(wxListEvent& event);
   void OnContextGrid(wxListEvent& event);
@@ -105,8 +115,21 @@ class WxLibraryView : public wxPanel {
   wxStaticText* empty_hint_ = nullptr;
   wxImageList* small_images_ = nullptr;
   wxImageList* big_images_ = nullptr;
-  // entry index -> image list position.
+  // entry index -> image list position (small_images_).
   std::vector<int> icon_index_;
+  // entry index -> image list position (big_images_, grid view). Tracked
+  // separately because the small list also holds the status balls, so the
+  // two lists number entry icons differently.
+  std::vector<int> big_icon_index_;
+  // Compatibility data (Unknown when an entry has no report) and the
+  // pre-rendered status balls (index = rating rank). Balls occupy
+  // small_images_ slots 1..5, right after the placeholder.
+  // Pre-rendered status balls (index = rating rank). Balls occupy
+  // small_images_ slots 1..5, right after the placeholder.
+  wxBitmap compat_balls_[5];
+  wxBitmap compat_grid_balls_[5];
+  // Last hover tooltip, to avoid resetting it on every mouse move.
+  wxString last_tip_;
   size_t menu_index_ = 0;
 };
 
