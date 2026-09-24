@@ -88,11 +88,20 @@ DEFINE_bool(allow_game_relative_writes, false,
 DEFINE_CVar_DisplayName(allow_game_relative_writes,
                         "Allow game-relative writes");
 
+DEFINE_bool(in_process_title_relaunch, true,
+            "Handle title-to-title launches in-process via full "
+            "Shutdown/Setup cycle instead of spawning a new emulator "
+            "process.",
+            "General");
+DEFINE_CVar_DisplayName(in_process_title_relaunch, "In-process title relaunch");
+
 DECLARE_bool(allow_plugins);
 DECLARE_bool(mount_scratch);
 DECLARE_bool(mount_cache);
 DECLARE_bool(mount_memory_unit);
 DECLARE_bool(force_mount_devkit);
+DECLARE_string(gpu);
+DECLARE_string(apu);
 
 DEFINE_int32_choices(priority_class, 0,
                      "Forces Xenia to use different process priority than "
@@ -181,6 +190,13 @@ Emulator::~Emulator() { Shutdown(); }
 
 void Emulator::Shutdown() {
   // Note that we delete things in the reverse order they were initialized.
+
+  // During relaunch, notify listeners before teardown so they can disconnect
+  // UI resources while subsystems are still alive. Skip during normal
+  // destructor — the UI loop may not be running.
+  if (relaunching_) {
+    on_before_shutdown();
+  }
 
   // Give the systems time to shutdown before we delete them.
   if (graphics_system_) {
@@ -442,6 +458,12 @@ X_STATUS Emulator::SetupTitleSystems() {
   if (graphics_ready_hook_) {
     graphics_ready_hook_();
   }
+  // Snapshot the backends the live systems were built with, after per-game
+  // overrides have been applied. The next launch compares these against the
+  // incoming title's overrides to detect a backend switch that needs a
+  // fresh process.
+  active_gpu_backend_ = cvars::gpu;
+  active_apu_backend_ = cvars::apu;
   return X_STATUS_SUCCESS;
 }
 
@@ -619,6 +641,89 @@ X_STATUS Emulator::ResetTitle() {
   on_terminate();
   XELOGI("ResetTitle: complete");
   return X_STATUS_SUCCESS;
+}
+
+void Emulator::RelaunchTitle(const std::string& host_path,
+                             const std::string& launch_path,
+                             uint32_t launch_flags,
+                             std::vector<uint8_t> launch_data) {
+  std::unique_lock<std::mutex> launch_lock(launch_mutex_);
+  XELOGI(
+      "RelaunchTitle: starting full in-process relaunch, target={}, launch={}",
+      host_path, launch_path);
+
+  // Tell WaitUntilExit not to fire on_exit when the main thread dies.
+  relaunching_ = true;
+
+  // Stop the dispatch thread gracefully before force-terminating threads,
+  // otherwise TerminateThread corrupts the CV it's blocked on.
+  kernel_state_->ShutdownDispatchThread();
+
+  // Stop the GPU command processor before terminating guest threads so its
+  // worker can cleanly run ShutdownContext and free its resources.
+  // (CommandProcessor::Shutdown is idempotent; Shutdown() re-run is a no-op.)
+  if (graphics_system_ && graphics_system_->command_processor()) {
+    graphics_system_->command_processor()->Shutdown();
+  }
+
+  // Force-terminate remaining guest threads.
+  {
+    auto threads =
+        kernel_state()->object_table()->GetObjectsByType<kernel::XThread>(
+            kernel::XObject::Type::Thread);
+    XELOGI("RelaunchTitle: terminating {} threads", threads.size());
+    for (auto thread : threads) {
+      thread->Terminate(0);
+    }
+  }
+
+  Shutdown();
+  X_STATUS status = X_STATUS_UNSUCCESSFUL;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    if (attempt > 0) {
+      // Device teardown can leave the driver transiently unable to enumerate
+      // adapters - give it a moment before retrying.
+      xe::threading::Sleep(std::chrono::seconds(1));
+    }
+    status = Setup(nullptr, nullptr, require_cpu_backend_, nullptr, nullptr,
+                   nullptr);
+    if (XSUCCEEDED(status)) {
+      break;
+    }
+    XELOGW("RelaunchTitle: setup attempt {} failed: {:08X}, retrying",
+           attempt + 1, status);
+    Shutdown();
+  }
+  if (XFAILED(status)) {
+    XELOGE("RelaunchTitle: re-initialization failed, not launching");
+    relaunching_ = false;
+    on_terminate();
+    return;
+  }
+  MountStandardDrives();
+
+  // Populate launch data on the fresh xam module.
+  auto xam_new =
+      kernel_state_->GetKernelModule<kernel::xam::XamModule>("xam.xex");
+  if (xam_new) {
+    auto& ld = xam_new->loader_data();
+    ld.host_path =
+        host_path.empty() ? xe::path_to_utf8(last_launch_path_) : host_path;
+    ld.launch_path = launch_path;
+    ld.launch_flags = launch_flags;
+    ld.launch_data = std::move(launch_data);
+  }
+
+  // Fall back to the initial launch path if host_path is empty (command-line
+  // launch rather than loader_data-driven).
+  auto launch_target =
+      host_path.empty() ? last_launch_path_ : xe::to_path(host_path);
+  XELOGI("RelaunchTitle: launching '{}'", xe::path_to_utf8(launch_target));
+  launch_lock.unlock();
+  LaunchPath(launch_target);
+
+  relaunching_ = false;
+  XELOGI("RelaunchTitle: relaunch complete");
 }
 
 const std::unique_ptr<vfs::Device> Emulator::CreateVfsDevice(
@@ -812,6 +917,11 @@ Emulator::FileSignatureType Emulator::GetFileSignature(
 }
 
 X_STATUS Emulator::LaunchPath(const std::filesystem::path& path) {
+  // Remember for relaunch fallback when host_path is empty.
+  if (!path.empty()) {
+    last_launch_path_ = path;
+  }
+
   X_STATUS mount_result = X_STATUS_SUCCESS;
 
   switch (GetFileSignature(path)) {

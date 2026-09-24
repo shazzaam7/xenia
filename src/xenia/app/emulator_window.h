@@ -88,6 +88,11 @@ class EmulatorWindow {
   void UpdateTitle();
   void ShowLibrary();
   void ShowGame();
+  // Spawns a fresh emulator process for the given title and quits this one.
+  // Used when per-game backend overrides differ from the live backends, or
+  // when in-process relaunch is disabled. Forwards the parent's CLI flags
+  // and appends --return_to_ui so the child returns to the library.
+  void LaunchTitleInNewProcess(const std::filesystem::path& path_to_file);
   void SetFullscreen(bool fullscreen);
   void ToggleFullscreen();
   void SetInitializingShaderStorage(bool initializing);
@@ -334,6 +339,12 @@ class EmulatorWindow {
                          const std::filesystem::path& abs_path,
                          xe::X_STATUS result);
 
+  // Reapplies the "game view visible iff title open or launch pending"
+  // invariant. Canary uses a wxSimplebook (library vs game), not AUI panes:
+  // this keeps ShowLibrary/ShowGame in sync with target_pending_launch_ and
+  // refreshes title-dependent menu states.
+  void ApplyContentVisibility();
+
   void RunPreviouslyPlayedTitle();
   void FillRecentlyLaunchedTitlesMenu(xe::ui::MenuItem* recent_menu);
   void LoadRecentlyLaunchedTitles();
@@ -375,6 +386,10 @@ class EmulatorWindow {
   bool has_library_boot_ = false;
   size_t library_boot_index_ = 0;
   int library_boot_disc_ = 1;
+  // True while an async launch is in flight (worker thread running
+  // LaunchPath). Guards against double-click re-entry and keeps the game
+  // view visible until the launch settles. Always touched on the UI thread.
+  bool target_pending_launch_ = false;
 };
 
 }  // namespace app

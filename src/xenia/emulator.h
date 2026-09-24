@@ -205,6 +205,12 @@ class Emulator {
   // Setup.
   X_STATUS SetupTitleSystems();
 
+  // gpu/apu cvar values the live title systems were built with; empty before
+  // first SetupTitleSystems. Used to detect a backend change driven by
+  // per-game overrides so the next launch can route through a fresh process.
+  const std::string& active_gpu_backend() const { return active_gpu_backend_; }
+  const std::string& active_apu_backend() const { return active_apu_backend_; }
+
   // Synchronous hook invoked at the end of SetupTitleSystems on the calling
   // thread, for wiring UI-owned objects (the presenter) to the fresh graphics
   // system. The hook runs on a worker thread in launch flows, so it must
@@ -235,6 +241,14 @@ class Emulator {
   // re-initialized (in that case no title is open and subsystems are torn
   // down - do not launch).
   X_STATUS ResetTitle();
+
+  // Full in-process relaunch: terminates threads, Shutdown(), Setup(), then
+  // launches with new params. Must be called from a non-guest, non-UI thread.
+  // Holds launch_mutex_ across the whole sequence so concurrent teardown
+  // waits. Preserves the 3-attempt Setup retry from ResetTitle.
+  void RelaunchTitle(const std::string& host_path,
+                     const std::string& launch_path, uint32_t launch_flags,
+                     std::vector<uint8_t> launch_data);
 
   // Clears title state after a guest-initiated exit (XamLoaderTerminateTitle
   // and friends), where the calling guest thread dies inside
@@ -370,6 +384,25 @@ class Emulator {
   xe::Delegate<> on_terminate;
   xe::Delegate<> on_exit;
 
+  // Fired before Shutdown() during relaunch, while subsystems are still alive.
+  // The UI uses this to detach the presenter before GPU teardown.
+  xe::Delegate<> on_before_shutdown;
+
+  // Called when a title-to-title launch or dashboard exit requests a fresh
+  // process instead of an in-process relaunch. Parameters: host_path (empty
+  // = return to library / dashboard), launch_module, launch_flags,
+  // launch_data. The callback should spawn a new process with the given
+  // parameters.
+  using LaunchNewTitleCallback =
+      std::function<void(const std::string&, const std::string&, uint32_t,
+                         const std::vector<uint8_t>&)>;
+  LaunchNewTitleCallback on_launch_new_title() const {
+    return on_launch_new_title_;
+  }
+  void set_on_launch_new_title(LaunchNewTitleCallback callback) {
+    on_launch_new_title_ = std::move(callback);
+  }
+
   // Called when the game requests an exit to dashboard from a guest thread.
   // Carries the captured loader data for an optional title-to-title relaunch
   // (empty host_path = plain dashboard exit, return to library).
@@ -471,6 +504,15 @@ class Emulator {
   std::function<std::vector<std::unique_ptr<hid::InputDriver>>(ui::Window*)>
       input_driver_factory_;
   std::function<void()> graphics_ready_hook_;
+  // Backends the live title systems were built with. Empty until the first
+  // SetupTitleSystems. Compared against cvars::gpu/apu after per-game
+  // overrides to detect a backend switch that needs a fresh process.
+  std::string active_gpu_backend_;
+  std::string active_apu_backend_;
+  // Last successfully launched host path. Fallback for RelaunchTitle when
+  // host_path is empty (command-line launch rather than loader-driven).
+  std::filesystem::path last_launch_path_;
+  LaunchNewTitleCallback on_launch_new_title_;
 };
 
 }  // namespace xe
