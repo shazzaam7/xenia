@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -290,10 +291,27 @@ bool HttpGet(const std::string& url, std::string* body) {
   if (!body) {
     return false;
   }
-  CURL* curl = curl_easy_init();
-  if (!curl) {
-    return false;
+  // One-time process init (call_once: curl_global_init is not thread-safe).
+  static std::once_flag init_once;
+  std::call_once(init_once, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
+  // One easy handle per thread, reused across calls: DNS and TLS/TCP
+  // connections stay warm instead of re-handshaking every file.
+  struct ThreadHandle {
+    CURL* handle = nullptr;
+    ~ThreadHandle() {
+      if (handle) {
+        curl_easy_cleanup(handle);
+      }
+    }
+  };
+  thread_local ThreadHandle thread_handle;
+  if (!thread_handle.handle) {
+    thread_handle.handle = curl_easy_init();
+    if (!thread_handle.handle) {
+      return false;
+    }
   }
+  CURL* curl = thread_handle.handle;
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, body);
@@ -303,7 +321,6 @@ bool HttpGet(const std::string& url, std::string* body) {
   const CURLcode rc = curl_easy_perform(curl);
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-  curl_easy_cleanup(curl);
   return rc == CURLE_OK && http_code == 200 && !body->empty();
 #else
   (void)url;
