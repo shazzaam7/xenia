@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "xenia/app/wx/wx_compat_db.h"
 #include "xenia/app/wx/wx_library_view.h"
 #include "xenia/base/platform.h"
 #include "xenia/ui/file_picker.h"
@@ -105,6 +106,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void NoteGameBooted(size_t index, int disc_number);
   void ImportLibraryPaths(const std::vector<std::filesystem::path>& paths);
   void ScanLibraryFolder(const std::filesystem::path& dir);
+  // Starts a background compatibility fetch (no-op while one is running);
+  // force=true ignores cache freshness. Results land in the library view.
+  void RefreshCompat(bool force);
   // Imports installed titles found under the content tree. Runs on the UI
   // thread, usually once from AttachLibrary.
   void ScanInstalledGames();
@@ -120,6 +124,8 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnViewContent(size_t index) override;
   void OnGameConfig(size_t index) override;
   void OnPatches(size_t index) override;
+  void OnViewCompatReport(size_t index) override;
+  void OnSearchCompatIssues(size_t index) override;
 
  protected:
   bool OpenImpl() override;
@@ -218,6 +224,17 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   std::filesystem::path library_storage_root_;
   std::filesystem::path library_content_root_;
   std::vector<GameEntry> library_entries_;
+  // Compatibility ratings keyed by title ID, plus the in-flight fetch guard.
+  // The fetched map is transport only: ratings persist on the library
+  // entries themselves (library.toml) via ApplyCompatMap/FillMissingCompat.
+  CompatMap compat_;
+  bool compat_fetching_ = false;
+  // Writes a freshly fetched map into all entries (clearing ratings for
+  // titles with no report), persists, and refreshes the view.
+  void ApplyCompatMap(const CompatMap& map);
+  // Fills ratings only for entries that have none, from the last fetched
+  // data. Used after imports; never clears.
+  void FillMissingCompat();
   // Resolves the kernel state (null before setup/after shutdown,
   // re-created on every ResetTitle, so never cached).
   std::function<kernel::KernelState*()> kernel_state_;

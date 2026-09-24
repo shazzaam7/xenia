@@ -12,10 +12,12 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
 
+#include <wx/bitmap.h>
 #include <wx/button.h>
 #include <wx/choicdlg.h>
 #include <wx/choice.h>
@@ -33,6 +35,7 @@
 #include <wx/srchctrl.h>
 #include <wx/stattext.h>
 
+#include "xenia/app/wx/wx_compat_db.h"
 #include "xenia/app/wx/wx_game_art.h"
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
@@ -48,6 +51,11 @@ namespace {
 
 constexpr int kSmallIconPx = 32;
 constexpr int kBigIconPx = 128;
+// Status ball diameter: fits the 32px row with padding.
+constexpr int kStatusBallPx = 16;
+// Grid badge diameter and corner inset.
+constexpr int kGridBallPx = 24;
+constexpr int kGridBallInsetPx = 6;
 
 enum : int {
   kIdSearch = wxID_HIGHEST + 100,
@@ -62,6 +70,8 @@ enum : int {
   kIdMenuContent,
   kIdMenuConfig,
   kIdMenuPatches,
+  kIdMenuCompatReport,
+  kIdMenuCompatSearch,
 };
 
 bool MatchesFilter(const GameEntry& entry, const std::string& filter) {
@@ -123,6 +133,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   table_ = new wxListCtrl(book_, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                           wxLC_REPORT | wxLC_SINGLE_SEL);
   table_->InsertColumn(kColIcon, "", wxLIST_FORMAT_LEFT, 40);
+  table_->InsertColumn(kColStatus, "", wxLIST_FORMAT_LEFT, 40);
   table_->InsertColumn(kColTitleId, "Title ID", wxLIST_FORMAT_LEFT, 90);
   table_->InsertColumn(kColMediaId, "Media ID", wxLIST_FORMAT_LEFT, 90);
   table_->InsertColumn(kColTitle, "Title", wxLIST_FORMAT_LEFT, 260);
@@ -146,6 +157,12 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   small_images_->Add(PlaceholderBitmap(kSmallIconPx));
   big_images_ = new wxImageList(kBigIconPx, kBigIconPx, true);
   big_images_->Add(PlaceholderBitmap(kBigIconPx));
+  for (size_t i = 0; i < 5; ++i) {
+    compat_balls_[i] =
+        MakeCompatBall(static_cast<CompatRating>(i), kStatusBallPx);
+    compat_grid_balls_[i] =
+        MakeCompatBall(static_cast<CompatRating>(i), kGridBallPx);
+  }
   table_->AssignImageList(small_images_, wxIMAGE_LIST_SMALL);
   grid_->AssignImageList(big_images_, wxIMAGE_LIST_NORMAL);
 
@@ -156,8 +173,11 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnProfile, this, kIdProfile);
-  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuPatches);
+  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot,
+       kIdMenuCompatSearch);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
+  table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
+  grid_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverGrid, this);
   table_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
   grid_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
   table_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, &WxLibraryView::OnContextTable,
@@ -175,32 +195,73 @@ void WxLibraryView::RebuildIcons() {
   small_images_->RemoveAll();
   big_images_->RemoveAll();
   small_images_->Add(PlaceholderBitmap(kSmallIconPx));
+  // Status balls occupy slots 1..5 so SetItemColumnImage can address them
+  // by rating rank; entry icons follow. The list requires 32px bitmaps, so
+  // the 16px balls are centered on transparent canvases.
+  for (size_t i = 0; i < 5; ++i) {
+    wxImage canvas(kSmallIconPx, kSmallIconPx);
+    canvas.SetAlpha();
+    std::memset(canvas.GetAlpha(), 0,
+                static_cast<size_t>(kSmallIconPx) * kSmallIconPx);
+    wxBitmap padded(canvas);
+    {
+      wxMemoryDC dc(padded);
+      const int off = (kSmallIconPx - kStatusBallPx) / 2;
+      dc.DrawBitmap(compat_balls_[i], off, off, true);
+      dc.SelectObject(wxNullBitmap);
+    }
+    small_images_->Add(padded);
+  }
   big_images_->Add(PlaceholderBitmap(kBigIconPx));
   icon_index_.assign(entries_.size(), 0);
+  big_icon_index_.assign(entries_.size(), 0);
   for (size_t i = 0; i < entries_.size(); i++) {
-    icon_index_[i] = IconFor(entries_[i]);
+    IconFor(entries_[i], &icon_index_[i], &big_icon_index_[i]);
   }
 }
 
-int WxLibraryView::IconFor(const GameEntry& entry) {
+CompatRating WxLibraryView::EntryRating(size_t index) const {
+  // Ratings persist on the entry itself (library.toml); empty means Unknown.
+  return index < entries_.size() ? CompatRatingFromId(entries_[index].compat)
+                                 : CompatRating::kUnknown;
+}
+
+void WxLibraryView::IconFor(const GameEntry& entry, int* small_out,
+                            int* big_out) {
   if (entry.title_id.empty()) {
-    return 0;
+    *small_out = 0;
+    *big_out = 0;
+    return;
   }
   auto path = ArtIconPath(storage_root_, entry.title_id);
   std::error_code ec = {};
   if (!std::filesystem::exists(path, ec)) {
-    return 0;
+    *small_out = 0;
+    *big_out = 0;
+    return;
   }
   wxImage image;
   if (!image.LoadFile(wxString::FromUTF8(xe::path_to_utf8(path))) ||
       !image.IsOk()) {
-    return 0;
+    *small_out = 0;
+    *big_out = 0;
+    return;
   }
   int small_idx = small_images_->Add(
       wxBitmap(image.Scale(kSmallIconPx, kSmallIconPx, wxIMAGE_QUALITY_HIGH)));
-  int big_idx = big_images_->Add(
-      wxBitmap(image.Scale(kBigIconPx, kBigIconPx, wxIMAGE_QUALITY_HIGH)));
-  return small_idx > 0 ? small_idx : big_idx;
+  // Corner badge with the entry's compatibility rating.
+  wxBitmap big(image.Scale(kBigIconPx, kBigIconPx, wxIMAGE_QUALITY_HIGH));
+  {
+    const wxBitmap& ball = compat_grid_balls_[static_cast<size_t>(
+        CompatRatingFromId(entry.compat))];
+    wxMemoryDC dc(big);
+    dc.DrawBitmap(ball, kBigIconPx - ball.GetWidth() - kGridBallInsetPx,
+                  kBigIconPx - ball.GetHeight() - kGridBallInsetPx, true);
+    dc.SelectObject(wxNullBitmap);
+  }
+  int big_idx = big_images_->Add(big);
+  *small_out = small_idx;
+  *big_out = big_idx;
 }
 
 std::string WxLibraryView::LastPlayedLabel(std::time_t t) const {
@@ -235,6 +296,13 @@ void WxLibraryView::ApplySort() {
     return sort_ascending_ ? entries_[a].last_play < entries_[b].last_play
                            : entries_[a].last_play > entries_[b].last_play;
   };
+  // Best-first on ascending click (Xenia Manager parity); ties fall back to
+  // the title order below.
+  auto by_status = [&](size_t a, size_t b) {
+    auto ra = static_cast<uint8_t>(EntryRating(a));
+    auto rb = static_cast<uint8_t>(EntryRating(b));
+    return ra != rb ? (sort_ascending_ ? ra > rb : ra < rb) : by_title(a, b);
+  };
   // Grid always stays name-sorted (RPCS3 parity); the table follows the
   // clicked column.
   if (grid_mode_) {
@@ -244,6 +312,8 @@ void WxLibraryView::ApplySort() {
     sort_ascending_ = asc;
   } else if (sort_column_ == kColLastPlayed) {
     std::sort(order_.begin(), order_.end(), by_played);
+  } else if (sort_column_ == kColStatus) {
+    std::sort(order_.begin(), order_.end(), by_status);
   } else {
     std::sort(order_.begin(), order_.end(), by_title);
   }
@@ -257,7 +327,10 @@ void WxLibraryView::Populate() {
   for (size_t index : order_) {
     const auto& e = entries_[index];
     int icon = index < icon_index_.size() ? icon_index_[index] : 0;
+    int big_icon = index < big_icon_index_.size() ? big_icon_index_[index] : 0;
     long item = table_->InsertItem(row, icon);
+    table_->SetItemColumnImage(item, kColStatus,
+                               1 + static_cast<int>(EntryRating(index)));
     table_->SetItem(item, kColTitleId, WxLabel(e.title_id));
     table_->SetItem(item, kColMediaId, WxLabel(e.MediaIdLabel()));
     table_->SetItem(item, kColTitle, WxLabel(e.name));
@@ -265,7 +338,7 @@ void WxLibraryView::Populate() {
     table_->SetItem(item, kColLastPlayed,
                     WxLabel(LastPlayedLabel(e.last_play)));
     table_->SetItemData(item, index);
-    grid_->InsertItem(grid_->GetItemCount(), WxLabel(e.name), icon);
+    grid_->InsertItem(grid_->GetItemCount(), WxLabel(e.name), big_icon);
     grid_->SetItemData(grid_->GetItemCount() - 1, index);
     row++;
   }
@@ -341,6 +414,12 @@ void WxLibraryView::ShowContext(wxListCtrl* view, const wxPoint& pos) {
   menu.AppendSeparator();
   menu.Append(kIdMenuConfig, "Game Config...");
   menu.Append(kIdMenuPatches, "Patches...");
+  const auto& entry = entries_[menu_index_];
+  if (!entry.compat_url.empty()) {
+    menu.Append(kIdMenuCompatReport, "View Compatibility Report...");
+  } else if (!entry.title_id.empty()) {
+    menu.Append(kIdMenuCompatSearch, "Search Compatibility Issues...");
+  }
   menu.AppendSeparator();
   menu.Append(kIdMenuFolder, "Show in Folder");
   menu.Append(kIdMenuRemove, "Remove");
@@ -368,7 +447,7 @@ void WxLibraryView::OnMode(wxCommandEvent& event) {
 
 void WxLibraryView::OnSortColumn(wxListEvent& event) {
   int col = event.GetColumn();
-  if (col != kColTitle && col != kColLastPlayed) {
+  if (col != kColTitle && col != kColLastPlayed && col != kColStatus) {
     return;
   }
   if (sort_column_ == col) {
@@ -378,6 +457,51 @@ void WxLibraryView::OnSortColumn(wxListEvent& event) {
     sort_ascending_ = true;
   }
   Populate();
+}
+
+void WxLibraryView::OnHoverTable(wxMouseEvent& event) {
+  // wxListCtrl has no per-cell tooltips: hit-test the status column and
+  // drive the control tooltip manually. Cached so it only resets on change.
+  int flags = 0;
+  long sub = 0;
+  long row = table_->HitTest(event.GetPosition(), flags, &sub);
+  wxString tip;
+  if (row >= 0 && sub == kColStatus) {
+    size_t index = size_t(table_->GetItemData(row));
+    if (index < entries_.size()) {
+      tip = CompatName(EntryRating(index));
+    }
+  }
+  if (tip != last_tip_) {
+    last_tip_ = tip;
+    if (tip.empty()) {
+      table_->UnsetToolTip();
+    } else {
+      table_->SetToolTip(tip);
+    }
+  }
+  event.Skip();
+}
+
+void WxLibraryView::OnHoverGrid(wxMouseEvent& event) {
+  int flags = 0;
+  long row = grid_->HitTest(event.GetPosition(), flags);
+  wxString tip;
+  if (row >= 0) {
+    size_t index = size_t(grid_->GetItemData(row));
+    if (index < entries_.size()) {
+      tip = CompatName(EntryRating(index));
+    }
+  }
+  if (tip != last_tip_) {
+    last_tip_ = tip;
+    if (tip.empty()) {
+      grid_->UnsetToolTip();
+    } else {
+      grid_->SetToolTip(tip);
+    }
+  }
+  event.Skip();
 }
 
 void WxLibraryView::OnActivate(wxListEvent& event) {
@@ -446,6 +570,12 @@ void WxLibraryView::OnMenu(wxCommandEvent& event) {
       break;
     case kIdMenuPatches:
       delegate_->OnPatches(menu_index_);
+      break;
+    case kIdMenuCompatReport:
+      delegate_->OnViewCompatReport(menu_index_);
+      break;
+    case kIdMenuCompatSearch:
+      delegate_->OnSearchCompatIssues(menu_index_);
       break;
     default:
       break;

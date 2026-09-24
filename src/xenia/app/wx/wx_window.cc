@@ -730,6 +730,8 @@ void WxWindow::AttachLibrary(
   library_view_->SetEntries(library_entries_);
   ScanInstalledGames();
   ShowLibrary();
+  // Ratings come from library.toml; compatibility data is only fetched on
+  // manual Refresh, never automatically.
 
   // Size the frame to the library content, like the content install dialog
   // sizes to its rows: grow a too-small client area (e.g. a tiny persisted
@@ -813,6 +815,9 @@ void WxWindow::ImportLibraryPaths(
   }
   if (ImportGamePaths(library_view_, library_storage_root_, library_entries_,
                       paths)) {
+    // New titles resolve against the last fetched data; Unknown when absent.
+    // No fetch is kicked here: updates are manual-only via Refresh.
+    FillMissingCompat();
     SaveLibraryEntries();
     library_view_->SetEntries(library_entries_);
   }
@@ -1058,6 +1063,90 @@ void WxWindow::OnPatches(size_t index) {
   }
   ShowPatchDialog(library_view_, library_storage_root_ / "patches",
                   entry->title_id, entry->name);
+}
+
+void WxWindow::RefreshCompat(bool force) {
+  if (compat_fetching_ || library_storage_root_.empty()) {
+    return;
+  }
+  compat_fetching_ = true;
+  FetchCompatDataAsync(library_storage_root_, force,
+                       [this](bool ok, CompatMap map) {
+                         // Back to the UI thread through the view. The frame
+                         // owns the view and closing the frame quits the
+                         // process, so no lifetime guard beyond the null check
+                         // is needed.
+                         if (!library_view_) {
+                           return;
+                         }
+                         library_view_->CallAfter(
+                             [this, ok, fetched = std::move(map)]() mutable {
+                               compat_fetching_ = false;
+                               if (!library_view_) {
+                                 return;
+                               }
+                               if (ok) {
+                                 compat_ = fetched;
+                                 ApplyCompatMap(fetched);
+                               }
+                             });
+                       });
+}
+
+void WxWindow::ApplyCompatMap(const CompatMap& map) {
+  for (auto& entry : library_entries_) {
+    const CompatInfo* info = FindCompat(map, entry.title_id);
+    if (!info) {
+      entry.compat.clear();
+      entry.compat_url.clear();
+      continue;
+    }
+    // Persist the name only for real ratings; an Unknown report still keeps
+    // its URL so the report link stays available.
+    entry.compat = info->rating != CompatRating::kUnknown
+                       ? CompatRatingId(info->rating)
+                       : std::string();
+    entry.compat_url = info->url;
+  }
+  SaveLibraryEntries();
+  if (library_view_) {
+    library_view_->SetEntries(library_entries_);
+  }
+}
+
+void WxWindow::FillMissingCompat() {
+  if (compat_.empty()) {
+    return;
+  }
+  for (auto& entry : library_entries_) {
+    if (!entry.compat.empty() || !entry.compat_url.empty()) {
+      continue;
+    }
+    const CompatInfo* info = FindCompat(compat_, entry.title_id);
+    if (!info) {
+      continue;
+    }
+    if (info->rating != CompatRating::kUnknown) {
+      entry.compat = CompatRatingId(info->rating);
+    }
+    entry.compat_url = info->url;
+  }
+}
+
+void WxWindow::OnViewCompatReport(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->compat_url.empty()) {
+    return;
+  }
+  wxLaunchDefaultBrowser(WxLabel(entry->compat_url));
+}
+
+void WxWindow::OnSearchCompatIssues(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->title_id.empty()) {
+    return;
+  }
+  wxLaunchDefaultBrowser(WxLabel(CompatIssueSearchUrl(entry->title_id)));
 }
 
 void WxWindow::OnShowInFolder(size_t index) {

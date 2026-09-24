@@ -318,8 +318,9 @@ class EmulatorWindow {
   void GpuClearCaches();
   void ToggleDisplayConfigDialog();
   void ToggleControllerVibration();
-  void ShowCompatibility();
   void ShowFAQ();
+  // Refreshes game compatibility ratings (Help menu). No-op without wx UI.
+  void RefreshCompatData();
   void ShowBuildCommit();
 
   EmulatorWindow::ControllerHotKey ProcessControllerHotkey(int buttons);
