@@ -135,6 +135,53 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # ==============================================================================
+# curl (libcurl, static — HTTPS downloads, e.g. compatibility data)
+# ==============================================================================
+# Skipped when the submodule is absent (non-recursive clones); consumers
+# fall back to system curl or cache-only behavior (see src/xenia/app/wx).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
+  # TLS backend: Schannel on Windows (no extra deps). Elsewhere OpenSSL is
+  # required — without it there is no TLS, so curl is skipped entirely.
+  set(XENIA_CURL_TLS_OK TRUE)
+  if(WIN32)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+  else()
+    find_package(OpenSSL QUIET)
+    if(NOT OPENSSL_FOUND)
+      set(XENIA_CURL_TLS_OK FALSE)
+      message(STATUS "curl: OpenSSL not found, skipping vendored libcurl")
+    endif()
+  endif()
+  if(XENIA_CURL_TLS_OK)
+    # Minimal static libcurl: no tool, tests, examples, or docs.
+    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+    set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
+    set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_CURL_MANUAL OFF CACHE BOOL "" FORCE)
+    # libpsl is not vendored and its bundled find module is fatal when the
+    # option is on but the library is absent; plain HTTPS needs none of it.
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    # CURL::libcurl aliases whichever flavor BUILD_SHARED_LIBS selects, so
+    # force static-only for the duration of the add_subdirectory.
+    if(DEFINED BUILD_SHARED_LIBS)
+      set(_xenia_saved_shared_libs ${BUILD_SHARED_LIBS})
+    endif()
+    set(BUILD_SHARED_LIBS OFF)
+    add_subdirectory(curl)
+    if(DEFINED _xenia_saved_shared_libs)
+      set(BUILD_SHARED_LIBS ${_xenia_saved_shared_libs})
+    else()
+      unset(BUILD_SHARED_LIBS)
+    endif()
+    unset(_xenia_saved_shared_libs)
+  endif()
+  unset(XENIA_CURL_TLS_OK)
+endif()
+
+# ==============================================================================
 # fmt
 # ==============================================================================
 add_library(fmt STATIC
