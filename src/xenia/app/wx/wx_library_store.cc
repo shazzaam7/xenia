@@ -91,6 +91,12 @@ bool LoadLibrary(const std::filesystem::path& storage_root,
     if (auto v = t->get_as<int64_t>("last_played_disc")) {
       entry.last_played_disc = int(v->get());
     }
+    if (auto v = t->get_as<std::string>("compat")) {
+      entry.compat = v->get();
+    }
+    if (auto v = t->get_as<std::string>("compat_url")) {
+      entry.compat_url = v->get();
+    }
     if (auto arr = t->get_as<toml::array>("discs")) {
       for (const auto& d : *arr) {
         if (!d.is_table()) {
@@ -144,6 +150,12 @@ bool SaveLibrary(const std::filesystem::path& storage_root,
     t.insert("media_ids", std::move(media));
     t.insert("last_play", int64_t(entry.last_play));
     t.insert("last_played_disc", int64_t(entry.last_played_disc));
+    if (!entry.compat.empty()) {
+      t.insert("compat", entry.compat);
+    }
+    if (!entry.compat_url.empty()) {
+      t.insert("compat_url", entry.compat_url);
+    }
     auto discs = toml::array();
     for (const auto& disc : entry.discs) {
       auto d = toml::table();
