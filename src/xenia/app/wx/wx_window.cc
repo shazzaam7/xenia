@@ -41,6 +41,7 @@
 #include "xenia/app/wx/wx_game_content_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
+#include "xenia/app/wx/wx_patch_dialog.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
@@ -1048,6 +1049,15 @@ void WxWindow::OnGameConfig(size_t index) {
     return;
   }
   library_on_game_config_(entry->title_id, entry->name);
+}
+
+void WxWindow::OnPatches(size_t index) {
+  const GameEntry* entry = LibraryEntry(index);
+  if (!entry || entry->title_id.empty()) {
+    return;
+  }
+  ShowPatchDialog(library_view_, library_storage_root_ / "patches",
+                  entry->title_id, entry->name);
 }
 
 void WxWindow::OnShowInFolder(size_t index) {

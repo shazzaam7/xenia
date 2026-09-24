@@ -56,8 +56,7 @@ void PatchDB::LoadPatches() {
   XELOGI("PatchDB: Loaded patches for {} titles", loaded_patches_.size());
 }
 
-PatchFileEntry PatchDB::ReadPatchFile(
-    const std::filesystem::path& file_path) const {
+PatchFileEntry PatchDB::ReadPatchFile(const std::filesystem::path& file_path) {
   PatchFileEntry patch_file;
   toml::parse_result patch_toml_fields;
 
@@ -102,7 +101,7 @@ PatchFileEntry PatchDB::ReadPatchFile(
 
 bool PatchDB::ReadPatchData(std::vector<PatchDataEntry>& patch_data,
                             const std::pair<std::string, PatchData> data_type,
-                            const toml::table* patch_fields) const {
+                            const toml::table* patch_fields) {
   auto patch_data_fields = patch_fields->get_as<toml::array>(data_type.first);
   if (!patch_data_fields) {
     return true;
@@ -224,7 +223,7 @@ std::vector<PatchFileEntry> PatchDB::GetTitlePatches(
 }
 
 void PatchDB::ReadHashes(PatchFileEntry& patch_entry,
-                         const toml::node* hashes_node) const {
+                         const toml::node* hashes_node) {
   auto add_hash = [&patch_entry](const toml::node* hash_node) {
     if (!hash_node->is_string()) {
       return;
@@ -251,7 +250,7 @@ void PatchDB::ReadHashes(PatchFileEntry& patch_entry,
 }
 
 void PatchDB::ReadPatchHeader(PatchInfoEntry& patch_info,
-                              const toml::table* patch_fields) const {
+                              const toml::table* patch_fields) {
   std::string patch_name = {};
   std::string patch_desc = {};
   std::string patch_author = {};
