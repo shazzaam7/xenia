@@ -1147,6 +1147,9 @@ bool EmulatorWindow::Initialize() {
     help_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Refresh game &compatibility...",
         std::bind(&EmulatorWindow::RefreshCompatData, this)));
+    help_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "Update game &patches...",
+                         std::bind(&EmulatorWindow::UpdateGamePatches, this)));
     help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     help_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Build commit on GitHub...", "F2",
@@ -2341,6 +2344,19 @@ void EmulatorWindow::RefreshCompatData() {
   }
 #else
   XELOGW("Compatibility refresh requires the wxWidgets UI.");
+#endif
+}
+
+void EmulatorWindow::UpdateGamePatches() {
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  if (wx_window && wx_window->IsLibraryAttached()) {
+    wx_window->UpdateGamePatches();
+  } else {
+    XELOGW("Game patch update needs the game library.");
+  }
+#else
+  XELOGW("Game patch update requires the wxWidgets UI.");
 #endif
 }
 

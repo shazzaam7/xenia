@@ -127,6 +127,10 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnViewCompatReport(size_t index) override;
   void OnSearchCompatIssues(size_t index) override;
 
+  // Manual game-patch update (Help menu): modal progress over a background
+  // fetch. Runs on the UI thread.
+  void UpdateGamePatches();
+
  protected:
   bool OpenImpl() override;
   void RequestCloseImpl() override;

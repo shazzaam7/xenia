@@ -321,6 +321,8 @@ class EmulatorWindow {
   void ShowFAQ();
   // Refreshes game compatibility ratings (Help menu). No-op without wx UI.
   void RefreshCompatData();
+  // Updates game patches from upstream (Help menu). No-op without wx UI.
+  void UpdateGamePatches();
   void ShowBuildCommit();
 
   EmulatorWindow::ControllerHotKey ProcessControllerHotkey(int buttons);

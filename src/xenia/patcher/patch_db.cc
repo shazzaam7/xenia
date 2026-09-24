@@ -12,6 +12,9 @@
 #include "xenia/config.h"
 #include "xenia/memory.h"
 
+#include <fstream>
+#include <utility>
+
 #include "xenia/patcher/patch_db.h"
 
 DEFINE_bool(apply_patches, true, "Enables custom patching functionality",
@@ -20,6 +23,31 @@ DEFINE_CVar_DisplayName(apply_patches, "Apply patches");
 
 namespace xe {
 namespace patcher {
+
+namespace {
+
+std::string TrimPatchLine(std::string_view text) {
+  const auto first = text.find_first_not_of(" \t\r");
+  if (first == std::string_view::npos) {
+    return "";
+  }
+  return std::string(
+      text.substr(first, text.find_last_not_of(" \t\r") - first + 1));
+}
+
+// A [[patch]] header with a trailing comment ("[[patch]] # ...") is still
+// the same table to the TOML parser. Headers carry no strings, so '#' can
+// only start a comment here.
+bool IsPatchTableHeader(const std::string& line) {
+  std::string trimmed = TrimPatchLine(line);
+  const auto hash = trimmed.find('#');
+  if (hash != std::string::npos) {
+    trimmed = TrimPatchLine(trimmed.substr(0, hash));
+  }
+  return trimmed == "[[patch]]";
+}
+
+}  // namespace
 
 PatchDB::PatchDB(const std::filesystem::path patches_root) {
   patches_root_ = patches_root;
@@ -97,6 +125,111 @@ PatchFileEntry PatchDB::ReadPatchFile(const std::filesystem::path& file_path) {
     patch_file.patch_info.push_back(patch);
   }
   return patch_file;
+}
+
+bool PatchDB::WriteEnabledFlags(
+    const std::filesystem::path& path,
+    const std::vector<std::pair<size_t, bool>>& desired, bool make_backup) {
+  if (desired.empty()) {
+    return true;
+  }
+  std::ifstream input(path);
+  if (!input.is_open()) {
+    return false;
+  }
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(input, line)) {
+    lines.push_back(line);
+  }
+  input.close();
+
+  // Table index -> line span of each top-level [[patch]] table.
+  std::vector<std::pair<size_t, size_t>> tables;
+  for (size_t i = 0; i < lines.size(); ++i) {
+    if (IsPatchTableHeader(lines[i])) {
+      if (!tables.empty()) {
+        tables.back().second = i;
+      }
+      tables.push_back({i, lines.size()});
+    }
+  }
+  for (const auto& want : desired) {
+    if (want.first >= tables.size()) {
+      return false;
+    }
+  }
+
+  for (const auto& [index, enabled] : desired) {
+    const auto [first, last] = tables[index];
+    const std::string value = enabled ? "true" : "false";
+    bool written = false;
+    for (size_t i = first + 1; i < last; ++i) {
+      const std::string trimmed = TrimPatchLine(lines[i]);
+      if (trimmed.empty() || trimmed[0] == '#') {
+        continue;
+      }
+      if (trimmed[0] == '[') {
+        break;
+      }
+      const auto equals = trimmed.find('=');
+      if (equals == std::string::npos ||
+          TrimPatchLine(trimmed.substr(0, equals)) != "is_enabled") {
+        continue;
+      }
+      // Preserve indentation and any trailing comment; normalize the
+      // spacing around '=' to the canonical form.
+      const auto original_equals = lines[i].find('=');
+      const auto indent_end = lines[i].find_first_not_of(" \t");
+      const std::string indent =
+          indent_end == std::string::npos ? "" : lines[i].substr(0, indent_end);
+      std::string suffix = TrimPatchLine(lines[i].substr(original_equals + 1));
+      const auto token_end = suffix.find_first_of(" \t#");
+      const std::string rest =
+          token_end == std::string::npos ? "" : suffix.substr(token_end);
+      lines[i] = indent + "is_enabled = " + value + rest;
+      written = true;
+      break;
+    }
+    if (!written) {
+      // No flag yet: add one right after the table header.
+      lines.insert(lines.begin() + first + 1, "is_enabled = " + value);
+      // Line numbers below shift, but tables were already validated and each
+      // table is handled independently by index order... re-derive spans to
+      // stay correct when several tables miss the flag.
+      tables.clear();
+      for (size_t i = 0; i < lines.size(); ++i) {
+        if (IsPatchTableHeader(lines[i])) {
+          if (!tables.empty()) {
+            tables.back().second = i;
+          }
+          tables.push_back({i, lines.size()});
+        }
+      }
+    }
+  }
+
+  if (make_backup) {
+    std::error_code ec;
+    std::filesystem::copy_file(
+        path, std::filesystem::path(path.string() + ".bak"),
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) {
+      return false;
+    }
+  }
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output.is_open()) {
+    return false;
+  }
+  for (size_t i = 0; i < lines.size(); ++i) {
+    output << lines[i];
+    // getline strips the newline; the original may or may not end with one.
+    // A trailing newline is always valid TOML, so normalize to it.
+    output << '\n';
+  }
+  output.close();
+  return !output.fail();
 }
 
 bool PatchDB::ReadPatchData(std::vector<PatchDataEntry>& patch_data,

@@ -74,6 +74,11 @@ CompatRating CompatRatingFromId(std::string_view name);
 // Antialiased filled circle used as the compatibility badge.
 wxBitmap MakeCompatBall(CompatRating rating, int size_px);
 
+// Plain HTTPS GET into a string. Only available when built with libcurl
+// (XENIA_HAS_CURL); returns false otherwise. Shared by the compatibility
+// grabber and the patch updater.
+bool HttpGet(const std::string& url, std::string* body);
+
 // Cache location: <storage_root>/compatibility_data.json.
 std::filesystem::path CompatCachePath(
     const std::filesystem::path& storage_root);
