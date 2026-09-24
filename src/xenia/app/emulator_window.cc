@@ -1144,9 +1144,9 @@ bool EmulatorWindow::Initialize() {
         MenuItem::Create(MenuItem::Type::kString, "FA&Q...", "F1",
                          std::bind(&EmulatorWindow::ShowFAQ, this)));
     help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-    help_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Game &compatibility...",
-                         std::bind(&EmulatorWindow::ShowCompatibility, this)));
+    help_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "Refresh game &compatibility...",
+        std::bind(&EmulatorWindow::RefreshCompatData, this)));
     help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     help_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Build commit on GitHub...", "F2",
@@ -2327,22 +2327,21 @@ void EmulatorWindow::ToggleControllerVibration() {
   }
 }
 
-void EmulatorWindow::ShowCompatibility() {
-  const std::string_view base_url =
-      "https://github.com/xenia-canary/game-compatibility/issues";
-  std::string url;
-  // Avoid searching for a title ID of "00000000".
-  uint32_t title_id = emulator_->title_id();
-  if (!title_id) {
-    url = base_url;
-  } else {
-    url = fmt::format("{}?q=is%3Aissue+is%3Aopen+{:08X}", base_url, title_id);
-  }
-  LaunchWebBrowser(url);
-}
-
 void EmulatorWindow::ShowFAQ() {
   LaunchWebBrowser("https://github.com/xenia-canary/xenia-canary/wiki/FAQ");
+}
+
+void EmulatorWindow::RefreshCompatData() {
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  if (wx_window && wx_window->IsLibraryAttached()) {
+    wx_window->RefreshCompat(true);
+  } else {
+    XELOGW("Compatibility refresh needs the game library.");
+  }
+#else
+  XELOGW("Compatibility refresh requires the wxWidgets UI.");
+#endif
 }
 
 void EmulatorWindow::ShowBuildCommit() {

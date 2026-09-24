@@ -38,6 +38,12 @@ struct GameEntry {
   std::vector<GameDisc> discs;
   std::time_t last_play = 0;
   int last_played_disc = 1;
+  // Compatibility rating name ("Playable", "Gameplay", "Loads",
+  // "Unplayable"); empty means Unknown. Refreshed from the compatibility
+  // database, persisted here so the library needs no sidecar file.
+  std::string compat;
+  // Report URL for the rating; empty when the database has no report.
+  std::string compat_url;
 
   bool IsMultiDisc() const { return discs.size() > 1; }
   size_t DiscCount() const { return discs.empty() ? 0 : discs.size(); }
