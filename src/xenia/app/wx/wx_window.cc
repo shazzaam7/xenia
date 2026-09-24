@@ -42,6 +42,7 @@
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
 #include "xenia/app/wx/wx_patch_dialog.h"
+#include "xenia/app/wx/wx_patch_update.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
@@ -1147,6 +1148,13 @@ void WxWindow::OnSearchCompatIssues(size_t index) {
     return;
   }
   wxLaunchDefaultBrowser(WxLabel(CompatIssueSearchUrl(entry->title_id)));
+}
+
+void WxWindow::UpdateGamePatches() {
+  if (!library_view_ || library_storage_root_.empty()) {
+    return;
+  }
+  ShowPatchUpdateDialog(library_view_, library_storage_root_ / "patches");
 }
 
 void WxWindow::OnShowInFolder(size_t index) {
