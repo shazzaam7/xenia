@@ -661,6 +661,12 @@ void ImGuiDrawer::Draw(UIDrawContext& ui_draw_context) {
   ImGui::Render();
   ImDrawData* draw_data = ImGui::GetDrawData();
   if (draw_data) {
+    // A dialog callback may have detached the drawer mid-frame (e.g. a
+    // stop/launch flow tearing down the presenter from within OnDraw).
+    // Re-check: RenderDrawLists dereferences immediate_drawer_.
+    if (!immediate_drawer_) {
+      return;
+    }
     RenderDrawLists(draw_data, ui_draw_context);
   }
 

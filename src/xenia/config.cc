@@ -9,6 +9,11 @@
 
 #include "config.h"
 
+#include <algorithm>
+#include <fstream>
+#include <set>
+#include <vector>
+
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
@@ -202,14 +207,26 @@ void PruneGameConfigFile(const std::filesystem::path& file_path,
   if (keys.empty()) {
     return;
   }
-  std::ifstream file(file_path);
+  // Binary mode: text mode would translate CRLF on Windows and the rewrite
+  // below would normalize the whole file to LF.
+  std::ifstream file(file_path, std::ios::binary);
   if (!file.is_open()) {
     return;
   }
+  // The sparse writer only emits single-line values, and only assignments
+  // are considered here; section headers and comments survive verbatim.
+  // Multi-line TOML values are not handled (a hand-edited value spanning
+  // lines would be left half-deleted) — acceptable because the writer never
+  // emits them.
   std::vector<std::string> kept_lines;
   std::string line;
+  std::string newline = "\n";
   bool dropped_any = false;
   while (std::getline(file, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      newline = "\r\n";
+      line.pop_back();
+    }
     const std::string_view trimmed = TrimAscii(line);
     // Only assignments are considered: the header comments and the section
     // headers survive verbatim, so the rest of the file keeps its shape.
@@ -233,7 +250,7 @@ void PruneGameConfigFile(const std::filesystem::path& file_path,
     return;
   }
   for (const auto& kept : kept_lines) {
-    fputs((kept + "\n").c_str(), handle);
+    fputs((kept + newline).c_str(), handle);
   }
   fclose(handle);
   XELOGI("Pruned game config: {}", file_path);
@@ -438,6 +455,19 @@ void LoadGameConfig(const std::string_view title_id) {
   // This title has no overrides of its own - the previous title's, which are
   // still in the cvars, must not carry over to it.
   ClearGameConfig();
+}
+
+void ReloadConfig() {
+  if (config_path.empty()) {
+    return;
+  }
+  if (std::filesystem::exists(config_path)) {
+    // Global layer only: unlike LoadGameConfigForPath this does not run the
+    // game-config-load callbacks, so reloaded display/backend values apply to
+    // live systems on the next title launch, not immediately.
+    ReadConfig(config_path, false);
+    XELOGI("Reloaded config from: {}", config_path);
+  }
 }
 
 bool SaveGameConfigSparse(const std::string& title_id,

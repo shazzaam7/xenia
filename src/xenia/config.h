@@ -35,6 +35,10 @@ std::filesystem::path GameConfigPath(const std::string& title_id);
 void LoadGameConfig(const std::string_view title_id);
 // Drops every per-game override, so the global config values apply again.
 void ClearGameConfig();
+// Re-reads the global config file from disk, so external edits (or a
+// spawned child inheriting stale cvars) pick up current values. No-op when
+// no config file is set. Does not touch per-game overrides.
+void ReloadConfig();
 // Removes the named settings (cvar names) from an existing per-title override
 // file, leaving every other line - the header, unrelated overrides and their
 // comments - untouched. Used when a stored override no longer fits the type its
@@ -48,7 +52,8 @@ void SaveConfig();
 // only, deleting it instead when no overrides are left (which means "use the
 // global config"). `title_name` fills the header comment; `reasons` maps a
 // cvar name to the comment appended to its line and may be null. Returns false
-// only when an existing file could not be written.
+// when the game config path is not set (before SetupConfig) or an existing
+// file could not be written.
 bool SaveGameConfigSparse(const std::string& title_id,
                           const std::string& title_name,
                           const std::map<std::string, std::string>* reasons);
