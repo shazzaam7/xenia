@@ -257,22 +257,8 @@ size_t CurlWriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) {
 }
 
 bool DownloadCompatData(std::string* out) {
-  CURL* curl = curl_easy_init();
-  if (!curl) {
-    return false;
-  }
   const std::string url(kCompatDataUrl);
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-  curl_easy_setopt(curl, CURLOPT_USERAGENT, "xenia-canary-compat/1.0");
-  const CURLcode rc = curl_easy_perform(curl);
-  long http_code = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-  curl_easy_cleanup(curl);
-  return rc == CURLE_OK && http_code == 200 && !out->empty();
+  return HttpGet(url, out);
 }
 #endif  // XENIA_HAS_CURL
 
@@ -298,6 +284,33 @@ bool WriteCacheAtomically(const std::filesystem::path& cache,
 }
 
 }  // namespace
+
+bool HttpGet(const std::string& url, std::string* body) {
+#ifdef XENIA_HAS_CURL
+  if (!body) {
+    return false;
+  }
+  CURL* curl = curl_easy_init();
+  if (!curl) {
+    return false;
+  }
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, body);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "xenia-canary/1.0");
+  const CURLcode rc = curl_easy_perform(curl);
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  curl_easy_cleanup(curl);
+  return rc == CURLE_OK && http_code == 200 && !body->empty();
+#else
+  (void)url;
+  (void)body;
+  return false;
+#endif  // XENIA_HAS_CURL
+}
 
 void FetchCompatDataAsync(std::filesystem::path storage_root, bool force,
                           CompatFetchCallback done) {
