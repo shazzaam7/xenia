@@ -28,9 +28,11 @@
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/debugging.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/profiling.h"
+#include "xenia/base/string.h"
 #include "xenia/base/system.h"
 #include "xenia/base/threading.h"
 #include "xenia/config.h"
@@ -58,15 +60,30 @@
 #include "xenia/app/wx/wx_console_settings_dialog.h"
 #include "xenia/app/wx/wx_content_install_dialog.h"
 #include "xenia/app/wx/wx_game_config_dialog.h"
+#include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/app/wx/wx_window.h"
 #endif
 
 #include "version.h"
+#include "xenia/app/discord/discord_presence.h"
+
+#include <cstdlib>
+
+#if XE_PLATFORM_WIN32
+#include <windows.h>
+#else
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 DECLARE_bool(debug);
 
 DECLARE_string(hid);
+DECLARE_string(gpu);
+DECLARE_string(apu);
+DECLARE_bool(discord);
+DECLARE_bool(in_process_title_relaunch);
 
 DECLARE_bool(guide_button);
 
@@ -79,6 +96,11 @@ DECLARE_bool(readback_memexport);
 DEFINE_bool(fullscreen, false, "Whether to launch the emulator in fullscreen.",
             "Display");
 DEFINE_CVar_DisplayName(fullscreen, "Fullscreen");
+
+DEFINE_transient_bool(return_to_ui, false,
+                      "Return to UI process when game exits. Set automatically "
+                      "when launching from UI.",
+                      "General");
 
 DEFINE_bool(controller_hotkeys, false, "Hotkeys for Xbox and PS controllers.",
             "General");
@@ -336,6 +358,129 @@ void EmulatorWindow::OnEmulatorInitialized() {
           [this]() { SetupGraphicsSystemPresenterPainting(); });
     }
   });
+
+  // Detach the presenter before GPU teardown during relaunch. Fired inside
+  // Emulator::Shutdown while subsystems are still alive.
+  emulator_->on_before_shutdown.AddListener([this]() {
+    app_context_.CallInUIThreadSynchronous(
+        [this]() { ShutdownGraphicsSystemPresenterPainting(); });
+  });
+
+  // Out-of-process title-to-title launches from the kernel (when
+  // in_process_title_relaunch is off) and backend-switch respawns land here.
+  // Spawns a fresh process carrying the loader data, then quits this one.
+  // NOTE: Canary has no --log_append/--launch_flags/--launch_data cvars, so
+  // only --return_to_ui/--fullscreen/--launch_module (all defined) are
+  // forwarded. launch_flags/launch_data are logged and dropped.
+  emulator_->set_on_launch_new_title(
+      [this](const std::string& host_path, const std::string& launch_module,
+             uint32_t launch_flags, const std::vector<uint8_t>& launch_data) {
+        XELOGI("Launching new title process: host_path={}, module={}, flags={}",
+               host_path, launch_module, launch_flags);
+        if (!launch_data.empty()) {
+          XELOGW(
+              "on_launch_new_title: dropping {} bytes of launch_data (no "
+              "--launch_data cvar on Canary)",
+              launch_data.size());
+        }
+        if (launch_flags != 0) {
+          XELOGW(
+              "on_launch_new_title: dropping launch_flags={} (no "
+              "--launch_flags cvar on Canary)",
+              launch_flags);
+        }
+        std::filesystem::path executable_path =
+            xe::filesystem::GetExecutablePath();
+#if XE_PLATFORM_WIN32
+        auto exe_path_u16 = xe::path_to_utf16(executable_path);
+        std::u16string cmd_line = u"\"" + exe_path_u16 + u"\"";
+        int parent_argc = 0;
+        wchar_t** parent_argv =
+            CommandLineToArgvW(GetCommandLineW(), &parent_argc);
+        if (parent_argv) {
+          for (int i = 1; i < parent_argc; ++i) {
+            std::u16string a(reinterpret_cast<const char16_t*>(parent_argv[i]));
+            if (a.empty() || a[0] != u'-') {
+              continue;
+            }
+            // Skip flags we set fresh below to avoid stale duplicates.
+            auto is_prefix = [&a](const char16_t* p) {
+              size_t n = std::char_traits<char16_t>::length(p);
+              return a.size() >= n && a.compare(0, n, p) == 0;
+            };
+            if (is_prefix(u"--launch_module") || is_prefix(u"--fullscreen") ||
+                is_prefix(u"--return_to_ui") || is_prefix(u"--log_append") ||
+                is_prefix(u"--launch_flags") || is_prefix(u"--launch_data")) {
+              continue;
+            }
+            cmd_line += u" \"" + a + u"\"";
+          }
+          LocalFree(parent_argv);
+        }
+        // Returning to library or already in the return chain: child must
+        // not try to launch a title on its own.
+        if (cvars::return_to_ui || host_path.empty()) {
+          cmd_line += u" --return_to_ui=true";
+        }
+        if (window_->IsFullscreen() && !host_path.empty()) {
+          cmd_line += u" --fullscreen=true";
+        }
+        if (!launch_module.empty()) {
+          cmd_line +=
+              u" --launch_module=\"" + xe::to_utf16(launch_module) + u"\"";
+        }
+        if (!host_path.empty()) {
+          cmd_line += u" \"" + xe::to_utf16(host_path) + u"\"";
+        }
+        STARTUPINFOW si = {};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = {};
+        if (!CreateProcessW(
+                nullptr,
+                const_cast<wchar_t*>(
+                    reinterpret_cast<const wchar_t*>(cmd_line.c_str())),
+                nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr,
+                &si, &pi)) {
+          XELOGE("Failed to launch new process: {}", GetLastError());
+          return;
+        }
+        AllowSetForegroundWindow(pi.dwProcessId);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+#else
+        pid_t pid = fork();
+        if (pid == 0) {
+          std::vector<std::string> arg_storage;
+          arg_storage.push_back(executable_path.string());
+          if (cvars::return_to_ui || host_path.empty()) {
+            arg_storage.push_back("--return_to_ui=true");
+          }
+          if (window_->IsFullscreen() && !host_path.empty()) {
+            arg_storage.push_back("--fullscreen=true");
+          }
+          if (!launch_module.empty()) {
+            arg_storage.push_back("--launch_module=" + launch_module);
+          }
+          if (!host_path.empty()) {
+            arg_storage.push_back(host_path);
+          }
+          std::vector<const char*> argv;
+          for (const auto& a : arg_storage) {
+            argv.push_back(a.c_str());
+          }
+          argv.push_back(nullptr);
+          execv(executable_path.c_str(), const_cast<char**>(argv.data()));
+          std::exit(1);
+        } else if (pid < 0) {
+          XELOGE("Failed to fork process");
+          return;
+        }
+#endif
+        xe::FlushLog();
+        // May run on a guest thread (kernel-initiated title switch), so use
+        // the thread-safe deferred quit rather than QuitFromUIThread.
+        app_context_.RequestDeferredQuit();
+      });
 
   emulator_initialized_ = true;
   window_->SetMainMenuEnabled(true);
@@ -1382,9 +1527,42 @@ void EmulatorWindow::FileOpen() {
 
 void EmulatorWindow::FileClose() { StopTitle(); }
 
+void EmulatorWindow::ApplyContentVisibility() {
+  const bool title_open = emulator_ && emulator_->is_title_open();
+  const bool render_active = title_open || target_pending_launch_;
+  if (render_active) {
+    ShowGame();
+  } else {
+    ShowLibrary();
+  }
+  UpdateTitleDependentMenuItems();
+}
+
 void EmulatorWindow::StopTitle() {
   if (!emulator_->is_title_open()) {
     return;
+  }
+  // Tear down Discord presence as the game stops, before returning to the
+  // library.
+  if (cvars::discord) {
+    discord::DiscordPresence::Shutdown();
+  }
+  // NOTE: target_pending_launch_ is intentionally not cleared here. If a
+  // relaunch is in flight, clearing it would defeat the RunTitle re-entry
+  // guard and allow a second teardown mid-launch. The completion lambda
+  // below clears it on every path.
+  // When in-process relaunch is off, spawn a fresh process with no target
+  // (return to library) instead of resetting in-process. Falls through to
+  // the in-process stop when no spawn handler is wired.
+  if (!cvars::in_process_title_relaunch) {
+    if (auto cb = emulator_->on_launch_new_title()) {
+      cb(/*host_path=*/{}, /*launch_module=*/{}, /*launch_flags=*/0,
+         /*launch_data=*/{});
+      return;
+    }
+    XELOGW(
+        "StopTitle: out-of-process stop requested but no spawn handler "
+        "is wired; stopping in-process");
   }
   // Detach the presenter first, on the UI thread: the paint loop drives the
   // GPU completion timelines, so it must not touch GPU objects while the
@@ -1405,6 +1583,13 @@ void EmulatorWindow::StopTitle() {
       UpdateTitle();
       UpdateTitleDependentMenuItems();
       ShowLibrary();
+      // Drop fullscreen back to windowed now that the presenter is gone, so
+      // the user lands on the library at the default size.
+      if (window_->IsFullscreen()) {
+        SetFullscreen(false);
+      }
+      target_pending_launch_ = false;
+      ApplyContentVisibility();
     });
   }).detach();
 }
@@ -1415,33 +1600,54 @@ bool EmulatorWindow::StopTitleFromGuestThread(
   if (!emulator_->is_title_open()) {
     return false;
   }
+  // Out-of-process relaunch: hand the captured loader data to a fresh
+  // process and let the kernel fall through to TerminateTitle (return
+  // false). The new process replays the launch; this one exits.
+  if (!cvars::in_process_title_relaunch) {
+    if (auto cb = emulator_->on_launch_new_title()) {
+      // host_path empty = plain dashboard exit back to library.
+      if (host_path.empty()) {
+        cb(/*host_path=*/{}, /*launch_module=*/{}, /*launch_flags=*/0,
+           /*launch_data=*/{});
+      } else {
+        // NOTE: the guest launch_path is passed through the launch_module
+        // slot: Canary has no --launch_flags/--launch_data cvars, so the
+        // spawn handler forwards it as --launch_module (best effort).
+        cb(host_path, launch_path, launch_flags, launch_data);
+      }
+    }
+    return false;
+  }
   // Runs on a guest thread: hop presentation teardown through the UI thread
   // first so the paint loop can't touch GPU objects during teardown.
+  // on_before_shutdown (fired inside RelaunchTitle->Shutdown) also detaches,
+  // but this covers the gap before the worker starts.
   app_context_.CallInUIThreadSynchronous([this]() {
     ShutdownGraphicsSystemPresenterPainting();
     window_->SetIcon(nullptr, 0);
     ClearDialogs();
   });
-  std::thread([this, host_path = std::move(host_path),
+  // Detached non-guest thread: RelaunchTitle terminates all guest threads
+  // (including this caller, which parks in KernelState::ExitToDashboard) and
+  // performs the full Shutdown/Setup/Launch cycle under launch_mutex_.
+  Emulator* emulator = emulator_;
+  std::thread([this, emulator, host_path = std::move(host_path),
                launch_path = std::move(launch_path), launch_flags,
                launch_data = std::move(launch_data)]() mutable {
-    if (XFAILED(emulator_->ResetTitle())) {
-      app_context_.CallInUIThread([this]() {
-        xe::ui::ImGuiDialog::ShowMessageBox(
-            imgui_drawer_.get(), "Title Stop Failed!",
-            "Failed to stop the running title cleanly.\n\nCheck xenia.log "
-            "for technical details.");
-        UpdateTitle();
-        UpdateTitleDependentMenuItems();
-        ShowLibrary();
-      });
-      return;
-    }
     if (host_path.empty()) {
-      // Plain dashboard exit: back to the library.
-      app_context_.CallInUIThread([this]() {
+      // Plain dashboard exit: reset to idle and return to the library.
+      X_STATUS reset_result = emulator->ResetTitle();
+      app_context_.CallInUIThread([this, reset_result]() {
+        if (XFAILED(reset_result)) {
+          xe::ui::ImGuiDialog::ShowMessageBox(
+              imgui_drawer_.get(), "Title Stop Failed!",
+              "Failed to stop the running title cleanly.\n\nCheck xenia.log "
+              "for technical details.");
+        }
         // Same as StopTitle: the finished title's overrides must not outlive
-        // it (a relaunch below re-loads the incoming title's own file).
+        // it. Also clear any pending-launch guard so future opens aren't
+        // stuck ignored.
+        target_pending_launch_ = false;
         config::ClearGameConfig();
         UpdateTitle();
         UpdateTitleDependentMenuItems();
@@ -1449,31 +1655,25 @@ bool EmulatorWindow::StopTitleFromGuestThread(
       });
       return;
     }
-    // Title-to-title relaunch: restore the captured loader data into the
-    // fresh kernel, then launch exactly like RunTitle does. The presenter is
-    // wired by the graphics-ready hook once the title systems exist (see
-    // OnEmulatorInitialized), so there is nothing to attach here.
-    auto xam =
-        emulator_->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
-            "xam.xex");
-    auto& loader_data = xam->loader_data();
-    loader_data.host_path = host_path;
-    loader_data.launch_path = launch_path;
-    loader_data.launch_flags = launch_flags;
-    loader_data.launch_data = std::move(launch_data);
-    std::filesystem::path target = xe::to_path(host_path);
-    auto result = emulator_->LaunchPath(target);
-    if (XSUCCEEDED(result)) {
+    emulator->RelaunchTitle(host_path, launch_path, launch_flags,
+                            std::move(launch_data));
+    if (emulator->is_title_open()) {
       // Consumed in-process: drop the persisted request so a later restart
       // doesn't replay it. Kept on failure so the next boot can retry.
       auto xam_after =
-          emulator_->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
+          emulator->kernel_state()->GetKernelModule<kernel::xam::XamModule>(
               "xam.xex");
       if (xam_after) {
         xam_after->ClearSavedLoaderData();
       }
     }
+    std::filesystem::path target = xe::to_path(host_path);
     auto abs_path = std::filesystem::absolute(target);
+    // RelaunchTitle already ran LaunchPath; FinishTitleLaunch only does the
+    // UI half (recent list, ShowGame, sizing). Derive the status from
+    // whether a title is open now.
+    X_STATUS result =
+        emulator->is_title_open() ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
     app_context_.CallInUIThread([this, result, target, abs_path]() mutable {
       FinishTitleLaunch(target, abs_path, result);
     });
@@ -2656,6 +2856,7 @@ void EmulatorWindow::FinishTitleLaunch(
     const std::filesystem::path& path_to_file,
     const std::filesystem::path& abs_path, xe::X_STATUS result) {
   disable_hotkeys_ = false;
+  target_pending_launch_ = false;
 
   ClearDialogs();
 
@@ -2666,7 +2867,10 @@ void EmulatorWindow::FinishTitleLaunch(
         imgui_drawer_.get(), "Title Launch Failed!",
         "Failed to launch title.\n\nCheck xenia.log for technical details.");
 
-    emulator_->file_system()->Clear();
+    if (emulator_->file_system()) {
+      emulator_->file_system()->Clear();
+    }
+    ApplyContentVisibility();
   } else {
     AddRecentlyLaunchedTitle(path_to_file, emulator_->title_name());
 
@@ -2684,11 +2888,138 @@ void EmulatorWindow::FinishTitleLaunch(
     }
     wx_window->ShowGame();
     // Match the game view to the XConfig (or custom override) resolution.
-    const auto resolution = emulator_->graphics_system()->GetResolution();
-    wx_window->SizeGameView(resolution.first, resolution.second);
+    if (emulator_->graphics_system()) {
+      const auto resolution = emulator_->graphics_system()->GetResolution();
+      wx_window->SizeGameView(resolution.first, resolution.second);
+    }
 #endif
     UpdateTitleDependentMenuItems();
+    ApplyContentVisibility();
   }
+}
+
+namespace {
+
+// Best-effort per-game config preload for a host file path, using the wx
+// scanner's title-ID extraction (no VFS mount needed). Falls back to
+// ClearGameConfig when the title ID can't be determined, so a previous
+// title's overrides never leak into the next launch. Must run on the UI
+// thread before subsystems are (re)created.
+void LoadGameConfigForPath(const std::filesystem::path& abs_path) {
+  config::ReloadConfig();
+#ifdef XENIA_HAS_WX_UI
+  if (!abs_path.empty()) {
+    xe::app::wx_ui::GameMeta meta;
+    if (xe::app::wx_ui::ReadGameMeta(abs_path, meta) && meta.ok &&
+        !meta.title_id.empty() && meta.title_id != "00000000") {
+      config::LoadGameConfig(meta.title_id);
+      return;
+    }
+  }
+#endif
+  // No title ID (or no wx scanner): drop stale overrides. The accurate
+  // per-title load still happens in CompleteLaunchLoadModule after the
+  // module is loaded; this just ensures the subsystem creation below sees
+  // global values instead of the previous title's.
+  config::ClearGameConfig();
+}
+
+}  // namespace
+
+void EmulatorWindow::LaunchTitleInNewProcess(
+    const std::filesystem::path& path_to_file) {
+  std::filesystem::path executable_path = xe::filesystem::GetExecutablePath();
+
+  if (!path_to_file.empty() && !std::filesystem::exists(path_to_file)) {
+    XELOGE("Cannot launch title - file not found: {}",
+           xe::path_to_utf8(path_to_file));
+    return;
+  }
+
+#if XE_PLATFORM_WIN32
+  auto exe_path_u16 = xe::path_to_utf16(executable_path);
+  std::u16string cmd_line = u"\"" + exe_path_u16 + u"\"";
+
+  // Forward parent's dash-flags; the positional game file is replaced below.
+  // Skip flags we set fresh to avoid stale duplicates.
+  int parent_argc = 0;
+  wchar_t** parent_argv = CommandLineToArgvW(GetCommandLineW(), &parent_argc);
+  if (parent_argv) {
+    for (int i = 1; i < parent_argc; ++i) {
+      std::u16string a(reinterpret_cast<const char16_t*>(parent_argv[i]));
+      if (a.empty() || a[0] != u'-') {
+        continue;
+      }
+      auto is_prefix = [&a](const char16_t* p) {
+        size_t n = std::char_traits<char16_t>::length(p);
+        return a.size() >= n && a.compare(0, n, p) == 0;
+      };
+      if (is_prefix(u"--fullscreen") || is_prefix(u"--return_to_ui") ||
+          is_prefix(u"--launch_module") || is_prefix(u"--log_append") ||
+          is_prefix(u"--launch_flags") || is_prefix(u"--launch_data")) {
+        continue;
+      }
+      cmd_line += u" \"" + a + u"\"";
+    }
+    LocalFree(parent_argv);
+  }
+
+  // Tell game process to return to UI when it exits.
+  cmd_line += u" --return_to_ui=true";
+  if (window_ && window_->IsFullscreen()) {
+    cmd_line += u" --fullscreen=true";
+  }
+  if (!path_to_file.empty()) {
+    auto game_path_u16 = xe::path_to_utf16(path_to_file);
+    cmd_line += u" \"" + game_path_u16 + u"\"";
+  }
+
+  STARTUPINFOW si = {};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi = {};
+  if (!CreateProcessW(nullptr,
+                      const_cast<wchar_t*>(
+                          reinterpret_cast<const wchar_t*>(cmd_line.c_str())),
+                      nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr,
+                      nullptr, &si, &pi)) {
+    XELOGE("Failed to launch new process: {}", GetLastError());
+    return;
+  }
+  AllowSetForegroundWindow(pi.dwProcessId);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+#else
+  pid_t pid = fork();
+  if (pid == 0) {
+    // Child process.
+    std::vector<std::string> arg_storage;
+    arg_storage.push_back(executable_path.string());
+    arg_storage.push_back("--return_to_ui=true");
+    if (window_ && window_->IsFullscreen()) {
+      arg_storage.push_back("--fullscreen=true");
+    }
+    std::string target_arg;
+    if (!path_to_file.empty()) {
+      target_arg = path_to_file.string();
+      arg_storage.push_back(target_arg);
+    }
+    std::vector<const char*> argv;
+    for (const auto& a : arg_storage) {
+      argv.push_back(a.c_str());
+    }
+    argv.push_back(nullptr);
+    execv(executable_path.c_str(), const_cast<char**>(argv.data()));
+    XELOGE("Failed to execute: {}", executable_path.string());
+    std::exit(1);
+  } else if (pid < 0) {
+    XELOGE("Failed to fork process");
+    return;
+  }
+#endif
+
+  XELOGI("Launched title in new process: {}", xe::path_to_utf8(path_to_file));
+  xe::FlushLog();
+  app_context_.QuitFromUIThread();
 }
 
 xe::X_STATUS EmulatorWindow::RunTitle(
@@ -2738,50 +3069,121 @@ xe::X_STATUS EmulatorWindow::RunTitle(
   }
 
   if (emulator_->is_title_open()) {
+    // Guard against re-entry first, before touching anything else: without
+    // this a second Open issued while a relaunch is in flight would tear
+    // down mid-launch (RelaunchTitle releases launch_mutex_ across
+    // LaunchPath). Cleared by FinishTitleLaunch in the completion below.
+    if (target_pending_launch_) {
+      XELOGW("RunTitle: relaunch already in progress, ignoring");
+      return X_STATUS_UNSUCCESSFUL;
+    }
+    // A title is already running: preload the incoming title's config so
+    // backend overrides are visible before deciding in- vs out-of-process.
+    // (LoadGameConfigForPath reloads the global config first.)
+    LoadGameConfigForPath(abs_path);
+    // Backend switches leave residual driver state behind, so when the
+    // gpu/apu cvar (after per-game overrides) doesn't match the live
+    // backend, restart cleanly via the spawn path.
+    const auto& last_gpu = emulator_->active_gpu_backend();
+    const auto& last_apu = emulator_->active_apu_backend();
+    if ((!last_gpu.empty() && last_gpu != cvars::gpu) ||
+        (!last_apu.empty() && last_apu != cvars::apu)) {
+      XELOGI(
+          "RunTitle: backend changed (gpu {} -> {}, apu {} -> {}); respawning",
+          last_gpu, cvars::gpu, last_apu, cvars::apu);
+      LaunchTitleInNewProcess(abs_path);
+      return X_STATUS_SUCCESS;
+    }
+    if (!cvars::in_process_title_relaunch) {
+      // Spawn a fresh process (same path as the kernel relaunch). Fall
+      // through to the in-process relaunch when no spawn handler is wired.
+      if (auto cb = emulator_->on_launch_new_title()) {
+        cb(xe::path_to_utf8(abs_path), /*launch_module=*/{},
+           /*launch_flags=*/0, /*launch_data=*/{});
+        return X_STATUS_UNSUCCESSFUL;
+      }
+      XELOGW(
+          "RunTitle: out-of-process relaunch requested but no spawn "
+          "handler is wired; relaunching in-process");
+    }
+    target_pending_launch_ = true;
     // Detach the presenter first, on the UI thread: the paint loop drives the
     // GPU completion timelines, so it must not touch GPU objects while the
     // background thread below tears them down.
     ShutdownGraphicsSystemPresenterPainting();
-    // Detached non-guest, non-UI thread: ResetTitle terminates guest threads
-    // and tears down subsystems, which must not run on the UI thread.
-    // The presenter is re-attached before launching so the new title's first
-    // frames have a surface to present to (otherwise the window keeps showing
-    // the previous title's last frame).
+    // Detached non-guest, non-UI thread: RelaunchTitle terminates guest
+    // threads and performs the full Shutdown/Setup/Launch cycle, which must
+    // not run on the UI thread. The presenter is wired by the
+    // graphics-ready hook once the title systems exist (see
+    // OnEmulatorInitialized), so there is nothing to attach here.
     Emulator* emulator = emulator_;
-    std::thread([this, emulator, abs_path, path_to_file]() mutable {
-      if (XFAILED(emulator->ResetTitle())) {
-        app_context_.CallInUIThread([this]() {
-          xe::ui::ImGuiDialog::ShowMessageBox(
-              imgui_drawer_.get(), "Title Stop Failed!",
-              "Failed to stop the running title cleanly.\n\nCheck xenia.log "
-              "for technical details.");
-          UpdateTitle();
-          UpdateTitleDependentMenuItems();
-          ShowLibrary();
-        });
-        return;
-      }
-      // The presenter is wired by the graphics-ready hook once the title
-      // systems exist (see OnEmulatorInitialized), so there is nothing to
-      // attach here.
-      auto result = emulator->LaunchPath(abs_path);
-      app_context_.CallInUIThread([this, result, abs_path, path_to_file]() {
-        FinishTitleLaunch(path_to_file, abs_path, result);
+    std::string host_path = xe::path_to_utf8(abs_path);
+    std::thread([this, emulator, host_path]() mutable {
+      emulator->RelaunchTitle(host_path, /*launch_path=*/{},
+                              /*launch_flags=*/0, /*launch_data=*/{});
+      std::filesystem::path target = xe::to_path(host_path);
+      auto abs = std::filesystem::absolute(target);
+      X_STATUS result =
+          emulator->is_title_open() ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
+      app_context_.CallInUIThread([this, result, target, abs]() mutable {
+        FinishTitleLaunch(target, abs, result);
       });
     }).detach();
     return X_STATUS_SUCCESS;
   }
 
-  // The presenter is wired by the graphics-ready hook once the title systems
-  // exist (see OnEmulatorInitialized): after a Stop the painting was shut down,
-  // and the fresh graphics system gets its surface there. Without it the game
-  // would boot with no presenter and the window would keep showing the
-  // previous title's last frame.
-  auto result = emulator_->LaunchPath(abs_path);
+  // Guard against re-entry — a rapid double-click would otherwise spawn
+  // two concurrent LaunchPath threads.
+  if (target_pending_launch_) {
+    XELOGW("RunTitle: launch already in progress, ignoring");
+    return X_STATUS_UNSUCCESSFUL;
+  }
 
-  FinishTitleLaunch(path_to_file, abs_path, result);
+  // Preload the incoming title's config (global reload + per-game overrides)
+  // before touching subsystems, so the backend-switch check below sees the
+  // incoming title's gpu/apu. The accurate per-title load still happens
+  // inside CompleteLaunch after the module is loaded; this preload handles
+  // the respawn decision without a mount.
+  LoadGameConfigForPath(abs_path);
+  // Backend switches in-process leave residual driver/loader state behind,
+  // so when the gpu/apu cvar (after per-game overrides) doesn't match the
+  // live backend, restart the process cleanly via the spawn path. Checked
+  // before teardown so a respawn doesn't destroy live subsystems first.
+  const auto& last_gpu = emulator_->active_gpu_backend();
+  const auto& last_apu = emulator_->active_apu_backend();
+  if ((!last_gpu.empty() && last_gpu != cvars::gpu) ||
+      (!last_apu.empty() && last_apu != cvars::apu)) {
+    XELOGI("RunTitle: backend changed (gpu {} -> {}, apu {} -> {}); respawning",
+           last_gpu, cvars::gpu, last_apu, cvars::apu);
+    LaunchTitleInNewProcess(abs_path);
+    return X_STATUS_SUCCESS;
+  }
+  // Drop the previous title's subsystems (if any) before bringing
+  // graphics/audio back up with the merged configuration.
+  ShutdownGraphicsSystemPresenterPainting();
+  emulator_->ShutdownTitleSystems();
+  // Toggle before swap chain creation so it picks up the right size. Show
+  // the game view immediately so the render transition paints while
+  // LaunchPath blocks on the worker.
+  if (cvars::fullscreen && !window_->IsFullscreen()) {
+    SetFullscreen(true);
+  }
+  target_pending_launch_ = true;
+  ApplyContentVisibility();
+  // LaunchPath blocks for seconds; run it off the UI thread so the
+  // toolbar/render transition paints immediately. Post-launch work goes
+  // back to the UI thread.
+  Emulator* emulator = emulator_;
+  std::thread([this, emulator, abs_path, path_to_file]() mutable {
+    auto result = emulator->LaunchPath(abs_path);
+    app_context_.CallInUIThread([this, result, abs_path, path_to_file]() {
+      target_pending_launch_ = false;
+      FinishTitleLaunch(path_to_file, abs_path, result);
+      ApplyContentVisibility();
+    });
+  }).detach();
 
-  return result;
+  return X_STATUS_SUCCESS;
 }
 
 void EmulatorWindow::RunPreviouslyPlayedTitle() {
