@@ -205,6 +205,9 @@ wxString CompatName(CompatRating rating) {
 
 wxBitmap MakeCompatBall(CompatRating rating, int size_px) {
   const float radius = size_px * 0.42f;
+  // Black outline ring so the badge reads on any artwork.
+  const float border = (std::max)(1.0f, size_px * 0.09f);
+  const float inner = radius - border;
   const wxColour color = CompatColor(rating);
   wxImage image(size_px, size_px);
   image.SetAlpha();
@@ -218,13 +221,24 @@ wxBitmap MakeCompatBall(CompatRating rating, int size_px) {
       const float dx = x + 0.5f - cx;
       const float dy = y + 0.5f - cy;
       const float d = std::sqrt(dx * dx + dy * dy);
-      const float a = std::clamp(radius - d + 0.5f, 0.0f, 1.0f);
-      if (a > 0.0f) {
-        const size_t pi = (static_cast<size_t>(y) * size_px + x) * 3;
+      const float a_outer = std::clamp(radius - d + 0.5f, 0.0f, 1.0f);
+      if (a_outer <= 0.0f) {
+        continue;
+      }
+      const size_t pi = (static_cast<size_t>(y) * size_px + x) * 3;
+      if (d <= inner) {
+        const float a =
+            (std::min)(a_outer, std::clamp(inner - d + 0.5f, 0.0f, 1.0f));
         rgb[pi + 0] = color.Red();
         rgb[pi + 1] = color.Green();
         rgb[pi + 2] = color.Blue();
         alpha[y * size_px + x] = static_cast<unsigned char>(a * 255.0f + 0.5f);
+      } else {
+        rgb[pi + 0] = 0;
+        rgb[pi + 1] = 0;
+        rgb[pi + 2] = 0;
+        alpha[y * size_px + x] =
+            static_cast<unsigned char>(a_outer * 255.0f + 0.5f);
       }
     }
   }
