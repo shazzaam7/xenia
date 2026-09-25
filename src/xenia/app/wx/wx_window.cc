@@ -739,8 +739,8 @@ void WxWindow::AttachLibrary(
   library_view_->SetEntries(library_entries_);
   ScanInstalledGames();
   ShowLibrary();
-  // Ratings come from library.toml; compatibility data is only fetched on
-  // manual Refresh, never automatically.
+  // Ratings come from per-title info.toml; compatibility data is only fetched
+  // on manual Refresh, never automatically.
 
   // Size the frame to the library content, like the content install dialog
   // sizes to its rows: grow a too-small client area (e.g. a tiny persisted
@@ -796,10 +796,11 @@ const GameEntry* WxWindow::LibraryEntry(size_t index) const {
   return index < library_entries_.size() ? &library_entries_[index] : nullptr;
 }
 
-void WxWindow::SaveLibraryEntries() {
-  if (!library_storage_root_.empty()) {
-    SaveLibrary(library_storage_root_, library_entries_);
+void WxWindow::SaveLibraryEntry(size_t index) {
+  if (library_storage_root_.empty() || index >= library_entries_.size()) {
+    return;
   }
+  WriteEntry(library_storage_root_, library_entries_[index]);
 }
 
 void WxWindow::NoteGameBooted(size_t index, int disc_number) {
@@ -809,7 +810,7 @@ void WxWindow::NoteGameBooted(size_t index, int disc_number) {
   auto& entry = library_entries_[index];
   entry.last_play = std::time(nullptr);
   entry.last_played_disc = disc_number;
-  SaveLibraryEntries();
+  SaveLibraryEntry(index);
   if (library_view_) {
     // Push the updated vector: the view owns a copy, so refreshing from it
     // would keep showing the stale timestamp.
@@ -826,8 +827,8 @@ void WxWindow::ImportLibraryPaths(
                       paths)) {
     // New titles resolve against the last fetched data; Unknown when absent.
     // No fetch is kicked here: updates are manual-only via Refresh.
+    // (Import persists touched titles itself.)
     FillMissingCompat();
-    SaveLibraryEntries();
     library_view_->SetEntries(library_entries_);
   }
 }
@@ -1007,11 +1008,10 @@ void WxWindow::RemoveLibraryEntry(size_t index) {
       DeleteContentItem(library_content_root_ / "0000000000000000", target);
     }
   }
-  std::error_code ec = {};
-  std::filesystem::remove_all(ArtworkDir(library_storage_root_, entry.title_id),
-                              ec);
+  // The title folder holds metadata and artwork together, so one delete
+  // removes both.
+  RemoveTitle(library_storage_root_, entry.title_id);
   library_entries_.erase(library_entries_.begin() + index);
-  SaveLibraryEntries();
   library_view_->SetEntries(library_entries_);
 }
 
@@ -1106,18 +1106,18 @@ void WxWindow::ApplyCompatMap(const CompatMap& map) {
   for (auto& entry : library_entries_) {
     const CompatInfo* info = FindCompat(map, entry.title_id);
     if (!info) {
-      entry.compat.clear();
-      entry.compat_url.clear();
-      continue;
+      entry.compat.state.clear();
+      entry.compat.url.clear();
+    } else {
+      // Persist the name only for real ratings; an Unknown report still keeps
+      // its URL so the report link stays available.
+      entry.compat.state = info->rating != CompatRating::kUnknown
+                               ? CompatRatingId(info->rating)
+                               : std::string();
+      entry.compat.url = info->url;
     }
-    // Persist the name only for real ratings; an Unknown report still keeps
-    // its URL so the report link stays available.
-    entry.compat = info->rating != CompatRating::kUnknown
-                       ? CompatRatingId(info->rating)
-                       : std::string();
-    entry.compat_url = info->url;
+    WriteEntry(library_storage_root_, entry);
   }
-  SaveLibraryEntries();
   if (library_view_) {
     library_view_->SetEntries(library_entries_);
   }
@@ -1128,7 +1128,7 @@ void WxWindow::FillMissingCompat() {
     return;
   }
   for (auto& entry : library_entries_) {
-    if (!entry.compat.empty() || !entry.compat_url.empty()) {
+    if (!entry.compat.state.empty() || !entry.compat.url.empty()) {
       continue;
     }
     const CompatInfo* info = FindCompat(compat_, entry.title_id);
@@ -1136,18 +1136,19 @@ void WxWindow::FillMissingCompat() {
       continue;
     }
     if (info->rating != CompatRating::kUnknown) {
-      entry.compat = CompatRatingId(info->rating);
+      entry.compat.state = CompatRatingId(info->rating);
     }
-    entry.compat_url = info->url;
+    entry.compat.url = info->url;
+    WriteEntry(library_storage_root_, entry);
   }
 }
 
 void WxWindow::OnViewCompatReport(size_t index) {
   const GameEntry* entry = LibraryEntry(index);
-  if (!entry || entry->compat_url.empty()) {
+  if (!entry || entry->compat.url.empty()) {
     return;
   }
-  wxLaunchDefaultBrowser(WxLabel(entry->compat_url));
+  wxLaunchDefaultBrowser(WxLabel(entry->compat.url));
 }
 
 void WxWindow::OnSearchCompatIssues(size_t index) {
