@@ -11,6 +11,7 @@
 // save and reset semantics mirror the ImGui dialog.
 
 #include "xenia/app/wx/wx_console_settings_dialog.h"
+#include "xenia/app/wx/wx_util.h"
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
@@ -62,8 +63,8 @@ wxChoice* AddMapChoice(wxStaticBoxSizer* box, const char* label,
   wxWindow* parent = box->GetStaticBox();
   auto* row = new wxBoxSizer(wxHORIZONTAL);
   auto* text = new wxStaticText(parent, wxID_ANY, WxLabel(label));
-  text->SetMinSize(wxSize(kLabelPx, -1));
-  row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+  text->SetMinSize(wxSize(parent->FromDIP(kLabelPx), -1));
+  row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, parent->FromDIP(8));
   auto* choice = new wxChoice(parent, wxID_ANY);
   std::vector<T> keys;
   int selection = wxNOT_FOUND;
@@ -82,7 +83,7 @@ wxChoice* AddMapChoice(wxStaticBoxSizer* box, const char* label,
       },
       choice->GetId());
   row->Add(choice, 1, wxEXPAND);
-  box->Add(row, 0, wxEXPAND | wxTOP, 4);
+  box->Add(row, 0, wxEXPAND | wxTOP, parent->FromDIP(4));
   return choice;
 }
 
@@ -103,7 +104,7 @@ wxCheckBox* AddFlagCheck(wxStaticBoxSizer* box, const char* label,
         }
       },
       check->GetId());
-  box->Add(check, 0, wxTOP, 4);
+  box->Add(check, 0, wxTOP, parent->FromDIP(4));
   return check;
 }
 class WxConsoleSettingsDialog : public wxDialog {
@@ -125,23 +126,24 @@ class WxConsoleSettingsDialog : public wxDialog {
     BuildSystemPage();
 
     auto* outer = new wxBoxSizer(wxVERTICAL);
-    outer->Add(book_, 1, wxEXPAND | wxALL, 8);
+    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
     save_button_ = new wxButton(this, wxID_SAVE, "Save");
     saved_label_ = new wxStaticText(this, wxID_ANY, "Settings Saved!");
     saved_label_->Hide();
     reset_button_ = new wxButton(this, wxID_ANY, "Reset", wxDefaultPosition,
-                                 wxSize(55, -1));
+                                 wxSize(FromDIP(55), -1));
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
-    buttons->Add(save_button_, 0, wxRIGHT, 8);
-    buttons->Add(saved_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    buttons->Add(save_button_, 0, wxRIGHT, FromDIP(8));
+    buttons->Add(saved_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT,
+                 FromDIP(8));
     buttons->AddStretchSpacer();
-    buttons->Add(reset_button_, 0, wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxLEFT | wxBOTTOM, 8);
+    buttons->Add(reset_button_, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxLEFT | wxBOTTOM, FromDIP(8));
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 560);
-    size.y = std::min(size.y, 640);
+    size.x = std::min(size.x, FromDIP(560));
+    size.y = std::min(size.y, FromDIP(640));
     SetSize(size);
 
     save_button_->Bind(wxEVT_BUTTON, &WxConsoleSettingsDialog::OnSave, this);
@@ -154,7 +156,7 @@ class WxConsoleSettingsDialog : public wxDialog {
   static wxStaticBoxSizer* Group(wxWindow* parent, wxSizer* column,
                                  const char* label) {
     auto* box = new wxStaticBoxSizer(wxVERTICAL, parent, WxLabel(label));
-    column->Add(box, 0, wxEXPAND | wxALL, 4);
+    column->Add(box, 0, wxEXPAND | wxALL, parent->FromDIP(4));
     return box;
   }
 
@@ -162,9 +164,9 @@ class WxConsoleSettingsDialog : public wxDialog {
     wxWindow* parent = box->GetStaticBox();
     auto* row = new wxBoxSizer(wxHORIZONTAL);
     auto* text = new wxStaticText(parent, wxID_ANY, WxLabel(label));
-    text->SetMinSize(wxSize(kLabelPx, -1));
-    row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-    box->Add(row, 0, wxEXPAND | wxTOP, 4);
+    text->SetMinSize(wxSize(parent->FromDIP(kLabelPx), -1));
+    row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, parent->FromDIP(8));
+    box->Add(row, 0, wxEXPAND | wxTOP, parent->FromDIP(4));
     return row;
   }
 
@@ -176,11 +178,13 @@ class WxConsoleSettingsDialog : public wxDialog {
     const wxSize content = col->CalcMin();
     scrolled->SetMinSize(
         wxSize(std::min(content.GetWidth() +
-                            wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) + 16,
-                        520),
-               std::min(content.GetHeight() + 16, 470)));
+                            wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) +
+                            scrolled->FromDIP(16),
+                        scrolled->FromDIP(520)),
+               std::min(content.GetHeight() + scrolled->FromDIP(16),
+                        scrolled->FromDIP(470))));
     auto* page_sizer = new wxBoxSizer(wxVERTICAL);
-    page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, 4);
+    page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, scrolled->FromDIP(4));
     page->SetSizer(page_sizer);
   }
 
@@ -188,7 +192,7 @@ class WxConsoleSettingsDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* col = new wxBoxSizer(wxVERTICAL);
 
     auto* time = Group(scrolled, col, "Time");
@@ -241,7 +245,7 @@ class WxConsoleSettingsDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* col = new wxBoxSizer(wxVERTICAL);
 
     auto* video = Group(scrolled, col, "Video Options");
@@ -258,7 +262,7 @@ class WxConsoleSettingsDialog : public wxDialog {
     widescreen_ = new wxCheckBox(video->GetStaticBox(), wxID_ANY, "Widescreen");
     widescreen_->Bind(wxEVT_CHECKBOX, &WxConsoleSettingsDialog::OnWidescreen,
                       this);
-    video->Add(widescreen_, 0, wxTOP, 4);
+    video->Add(widescreen_, 0, wxTOP, FromDIP(4));
 
     auto* audio = Group(scrolled, col, "Audio Options");
     mono_ =
@@ -278,9 +282,9 @@ class WxConsoleSettingsDialog : public wxDialog {
                      static_cast<uint32_t>(kernel::X_AUDIO_FLAGS::LowLatency));
     auto* vol_row = Row(audio, "Audio player volume:");
     volume_ = new wxSlider(audio->GetStaticBox(), wxID_ANY, 70, 0, 100,
-                           wxDefaultPosition, wxSize(160, -1));
+                           wxDefaultPosition, wxSize(FromDIP(160), -1));
     volume_->Bind(wxEVT_SLIDER, &WxConsoleSettingsDialog::OnVolume, this);
-    vol_row->Add(volume_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    vol_row->Add(volume_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     volume_label_ = new wxStaticText(audio->GetStaticBox(), wxID_ANY, "");
     vol_row->Add(volume_label_, 0, wxALIGN_CENTER_VERTICAL);
 
@@ -306,8 +310,9 @@ class WxConsoleSettingsDialog : public wxDialog {
                                 bool last = false) {
     char buf[3];
     std::snprintf(buf, sizeof(buf), "%02X", byte);
-    auto* box = new wxTextCtrl(parent, wxID_ANY, WxLabel(buf),
-                               wxDefaultPosition, wxSize(32, -1));
+    auto* box =
+        new wxTextCtrl(parent, wxID_ANY, WxLabel(buf), wxDefaultPosition,
+                       wxSize(parent->FromDIP(32), -1));
     box->SetMaxLength(2);
     box->Bind(
         wxEVT_TEXT,
@@ -316,7 +321,7 @@ class WxConsoleSettingsDialog : public wxDialog {
           if (text.size() != 2 ||
               text.find_first_not_of("0123456789abcdefABCDEF") !=
                   std::string::npos) {
-            box->SetBackgroundColour(wxColour(255, 180, 180));
+            box->SetBackgroundColour(ErrorBgColour());
             box->Refresh();
             return;
           }
@@ -325,7 +330,8 @@ class WxConsoleSettingsDialog : public wxDialog {
           byte = uint8_t(std::stoul(text, nullptr, 16));
         },
         box->GetId());
-    row->Add(box, 0, wxALIGN_CENTER_VERTICAL | (last ? 0 : wxRIGHT), 4);
+    row->Add(box, 0, wxALIGN_CENTER_VERTICAL | (last ? 0 : wxRIGHT),
+             parent->FromDIP(4));
     return box;
   }
 

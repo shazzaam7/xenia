@@ -22,6 +22,7 @@
 #include "xenia/base/platform_win.h"
 #endif
 
+#include <wx/app.h>
 #include <wx/arrstr.h>
 #include <wx/event.h>
 #include <wx/gdicmn.h>
@@ -42,6 +43,11 @@ namespace wx_ui {
 // wx_window.cc).
 class WxViewPanel;
 class WxHostFrame;
+
+// Applies cvars::ui_theme to the running wxWidgets app (SetAppearance plus
+// MSWEnableDarkMode on Windows). Safe to call before any window exists;
+// UI-thread only like all wx calls.
+wxApp::AppearanceResult ApplyUiTheme();
 
 class WxMenuItem : public ui::MenuItem {
  public:
@@ -130,6 +136,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // Manual game-patch update (Help menu): modal progress over a background
   // fetch. Runs on the UI thread.
   void UpdateGamePatches();
+  // Re-applies cvars::ui_theme live and refreshes theme-dependent caches.
+  // Returns false when the switch needs an app restart instead.
+  bool RefreshTheme();
 
  protected:
   bool OpenImpl() override;

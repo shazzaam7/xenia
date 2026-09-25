@@ -1,3 +1,6 @@
 //{{NO_DEPENDENCIES}}
 
 MAINICON               ICON                    "..\\..\\..\\assets\\icon\\icon.ico"
+// Stock wxWidgets cursors (notably the blank cursor used for hiding the
+// pointer); without this, loading them traps at runtime.
+#include "wx/msw/wx.rc"

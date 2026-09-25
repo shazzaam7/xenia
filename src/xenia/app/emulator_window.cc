@@ -82,6 +82,7 @@ DECLARE_bool(debug);
 DECLARE_string(hid);
 DECLARE_string(gpu);
 DECLARE_string(apu);
+DECLARE_string(ui_theme);
 DECLARE_bool(discord);
 DECLARE_bool(in_process_title_relaunch);
 
@@ -1107,6 +1108,22 @@ bool EmulatorWindow::Initialize() {
   }
   display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
   {
+    // No checkmarks in ui::MenuItem: the active theme is the cvars::ui_theme
+    // value (also editable in the config editor).
+    auto theme_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Theme");
+    theme_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "Follow &system",
+        std::bind(&EmulatorWindow::SetUiTheme, this, "system")));
+    theme_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "&Light",
+        std::bind(&EmulatorWindow::SetUiTheme, this, "light")));
+    theme_menu->AddChild(
+        MenuItem::Create(MenuItem::Type::kString, "&Dark",
+                         std::bind(&EmulatorWindow::SetUiTheme, this, "dark")));
+    display_menu->AddChild(std::move(theme_menu));
+  }
+  display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+  {
     display_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "&Fullscreen", "F11",
                          std::bind(&EmulatorWindow::ToggleFullscreen, this)));
@@ -1728,6 +1745,24 @@ void EmulatorWindow::ShowProfileMenu() {
 #else
   ToggleProfilesConfigDialog();
 #endif
+}
+
+void EmulatorWindow::SetUiTheme(const std::string& theme) {
+  if (theme != "light" && theme != "dark") {
+    cvars::ui_theme = "system";
+  } else {
+    cvars::ui_theme = theme;
+  }
+  config::SaveConfig();
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  if (wx_window && wx_window->RefreshTheme()) {
+    return;
+  }
+#endif
+  xe::ShowSimpleMessageBox(
+      xe::SimpleMessageBoxType::Warning,
+      "The interface theme will apply the next time Xenia is started.");
 }
 
 void EmulatorWindow::ShowConsoleSettingsDialog() {

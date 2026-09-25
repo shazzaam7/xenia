@@ -20,6 +20,10 @@ DEFINE_int32_range(window_size_x, 1280, "Xenia window width", "UI",
                    "Window width", 0, 10000);
 DEFINE_int32_range(window_size_y, 720, "Xenia window height", "UI",
                    "Window height", 0, 10000);
+DEFINE_string_choices(ui_theme, "system", "Interface theme.", "UI", "UI theme",
+                      XE_CVAR_CHOICE("Follow system", "system"),
+                      XE_CVAR_CHOICE("Light", "light"),
+                      XE_CVAR_CHOICE("Dark", "dark"));
 
 namespace xe {
 namespace ui {

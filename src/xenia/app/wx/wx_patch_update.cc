@@ -239,9 +239,11 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
     }
     local = patcher::PatchDB::ReadPatchFile(path);
     // Keep the pre-update version next to the file before overwriting.
+    auto backup_path = path;
+    backup_path += ".bak";
     std::filesystem::copy_file(
-        path, std::filesystem::path(path.string() + ".bak"),
-        std::filesystem::copy_options::overwrite_existing, ec);
+        path, backup_path, std::filesystem::copy_options::overwrite_existing,
+        ec);
     if (ec) {
       XELOGW("PatchUpdate: {}: backup failed ({})", remote.name, ec.message());
       std::lock_guard<std::mutex> lock(progress->mutex);
@@ -253,10 +255,12 @@ void UpdateOneFile(const std::filesystem::path& patches_dir,
     if (!local_exists) {
       return;
     }
+    auto backup_path = path;
+    backup_path += ".bak";
     std::error_code restore_ec;
     std::filesystem::copy_file(
-        std::filesystem::path(path.string() + ".bak"), path,
-        std::filesystem::copy_options::overwrite_existing, restore_ec);
+        backup_path, path, std::filesystem::copy_options::overwrite_existing,
+        restore_ec);
   };
   if (!WriteAllBytes(path, bytes)) {
     XELOGW("PatchUpdate: {}: write failed", remote.name);
@@ -369,19 +373,21 @@ class WxPatchUpdateDialog : public wxDialog {
  public:
   WxPatchUpdateDialog(wxWindow* parent,
                       const std::filesystem::path& patches_dir)
+      // NOTE: size through parent, not this: FromDIP on an unconstructed
+      // window dereferences unset internals and AVs (GetDPIHelper).
       : wxDialog(parent, wxID_ANY, "Update Game Patches", wxDefaultPosition,
-                 wxSize(420, 140), wxDEFAULT_DIALOG_STYLE),
+                 parent->FromDIP(wxSize(420, 140)), wxDEFAULT_DIALOG_STYLE),
         state_(std::make_shared<PatchUpdateProgress>()) {
     auto* outer = new wxBoxSizer(wxVERTICAL);
     status_ = new wxStaticText(this, wxID_ANY, "Fetching patch list...");
-    outer->Add(status_, 0, wxEXPAND | wxALL, 8);
+    outer->Add(status_, 0, wxEXPAND | wxALL, FromDIP(8));
     gauge_ = new wxGauge(this, wxID_ANY, 100);
-    outer->Add(gauge_, 0, wxEXPAND | wxLEFT | wxRIGHT, 8);
+    outer->Add(gauge_, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer(1);
     cancel_ = new wxButton(this, wxID_CANCEL, "Cancel");
-    buttons->Add(cancel_, 0, wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxTOP, 8);
+    buttons->Add(cancel_, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxTOP, FromDIP(8));
     SetSizer(outer);
 
     cancel_->Bind(wxEVT_BUTTON, &WxPatchUpdateDialog::OnCancel, this);
@@ -415,17 +421,29 @@ class WxPatchUpdateDialog : public wxDialog {
   }
 
   void OnPoll(wxTimerEvent&) {
-    std::lock_guard<std::mutex> lock(state_->mutex);
-    if (state_->total > 0) {
-      gauge_->SetRange(int(state_->total));
-      gauge_->SetValue(int(std::min(state_->done, state_->total)));
-      status_->SetLabel(WxLabel("Updating " + state_->current + " (" +
-                                std::to_string(state_->done) + "/" +
-                                std::to_string(state_->total) + ")"));
+    // Snapshot under the lock, then update wx controls unlocked: holding the
+    // mutex across UI calls stalls the worker pool and risks re-entrancy on
+    // teardown.
+    size_t total = 0, done = 0;
+    std::string current;
+    bool finished = false;
+    {
+      std::lock_guard<std::mutex> lock(state_->mutex);
+      total = state_->total;
+      done = state_->done;
+      current = state_->current;
+      finished = state_->finished;
+    }
+    if (total > 0) {
+      gauge_->SetRange(int(total));
+      gauge_->SetValue(int(std::min(done, total)));
+      status_->SetLabel(WxLabel("Updating " + current + " (" +
+                                std::to_string(done) + "/" +
+                                std::to_string(total) + ")"));
     } else {
       gauge_->Pulse();
     }
-    if (state_->finished) {
+    if (finished) {
       poll_timer_.Stop();
       EndModal(state_->cancelled.load() ? wxID_CANCEL : wxID_OK);
     }

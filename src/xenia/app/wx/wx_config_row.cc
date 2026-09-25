@@ -139,7 +139,7 @@ void AddFlagsControl(
     check->SetToolTip(WxLabel(entry->var->description()));
     entry->flag_checks.push_back(check);
     entry->flag_values.push_back(bit);
-    flags_sizer->Add(check, 0, flag_border, 8);
+    flags_sizer->Add(check, 0, flag_border, parent->FromDIP(8));
   }
   row->Add(flags_sizer, 1, wxEXPAND);
 }
@@ -151,8 +151,8 @@ void AddPathControl(wxWindow* parent, wxWindow* dialog_parent, wxBoxSizer* row,
   entry->text = new wxTextCtrl(parent, wxID_ANY, WxLabel(current));
   entry->text->SetToolTip(WxLabel(entry->var->description()));
   row->Add(entry->text, 1, wxEXPAND);
-  auto* browse =
-      new wxButton(parent, wxID_ANY, "...", wxDefaultPosition, wxSize(30, -1));
+  auto* browse = new wxButton(parent, wxID_ANY, "...", wxDefaultPosition,
+                              wxSize(parent->FromDIP(30), -1));
   browse->SetToolTip("Browse for a path");
   const bool is_directory = entry->info && entry->info->path_is_directory;
   // Only the controls are captured - the ConfigRow itself moves around.
@@ -173,7 +173,7 @@ void AddPathControl(wxWindow* parent, wxWindow* dialog_parent, wxBoxSizer* row,
           }
         }
       });
-  row->Add(browse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
+  row->Add(browse, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, parent->FromDIP(4));
 }
 
 void AddRangeControl(wxWindow* parent, wxBoxSizer* row, ConfigRow* entry,
@@ -219,7 +219,7 @@ void AddRangeControl(wxWindow* parent, wxBoxSizer* row, ConfigRow* entry,
     });
     // wxEXPAND already stretches the slider vertically in this box sizer;
     // pairing it with an alignment flag trips a wxWidgets consistency assert.
-    row->Add(slider, 1, wxEXPAND | wxRIGHT, 8);
+    row->Add(slider, 1, wxEXPAND | wxRIGHT, parent->FromDIP(8));
     row->Add(spin, 0, wxALIGN_CENTER_VERTICAL);
   } else {
     wxSpinCtrl* spin = entry->spin;
@@ -231,7 +231,7 @@ void AddRangeControl(wxWindow* parent, wxBoxSizer* row, ConfigRow* entry,
     });
     // wxEXPAND already stretches the slider vertically in this box sizer;
     // pairing it with an alignment flag trips a wxWidgets consistency assert.
-    row->Add(slider, 1, wxEXPAND | wxRIGHT, 8);
+    row->Add(slider, 1, wxEXPAND | wxRIGHT, parent->FromDIP(8));
     row->Add(spin, 0, wxALIGN_CENTER_VERTICAL);
   }
   slider->SetToolTip(WxLabel(entry->var->description()));
@@ -504,12 +504,15 @@ void FinishConfigPage(wxScrolledWindow* scrolled, wxSizer* col) {
   const wxSize content = col->CalcMin();
   scrolled->SetMinSize(
       wxSize(std::min(content.GetWidth() +
-                          wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) + 16,
-                      kConfigPageContentWidth),
-             std::min(content.GetHeight() + 16, kConfigPageContentHeight)));
+                          wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) +
+                          scrolled->FromDIP(16),
+                      scrolled->FromDIP(kConfigPageContentWidth)),
+             std::min(content.GetHeight() + scrolled->FromDIP(16),
+                      scrolled->FromDIP(kConfigPageContentHeight))));
   auto* page = scrolled->GetParent();
   auto* page_sizer = new wxBoxSizer(wxVERTICAL);
-  page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, kConfigPageBorder);
+  page_sizer->Add(scrolled, 1, wxEXPAND | wxALL,
+                  scrolled->FromDIP(kConfigPageBorder));
   page->SetSizer(page_sizer);
   // wxTreebook sizes a page before its sizer exists, and it only re-lays out
   // pages it gains on a size event - which never arrives when the pages are
