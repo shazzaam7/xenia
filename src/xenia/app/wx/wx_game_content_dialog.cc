@@ -78,7 +78,8 @@ std::vector<uint8_t> ReadFileBytes(const std::filesystem::path& path,
   return bytes;
 }
 
-wxBitmap BitmapFromBytes(const std::vector<uint8_t>& bytes, bool grayscale) {
+wxBitmap BitmapFromBytes(const std::vector<uint8_t>& bytes, bool grayscale,
+                         int px) {
   if (bytes.empty()) {
     return wxNullBitmap;
   }
@@ -90,12 +91,12 @@ wxBitmap BitmapFromBytes(const std::vector<uint8_t>& bytes, bool grayscale) {
   if (grayscale) {
     image = image.ConvertToGreyscale();
   }
-  return wxBitmap(image.Scale(kIconPx, kIconPx, wxIMAGE_QUALITY_HIGH));
+  return wxBitmap(image.Scale(px, px, wxIMAGE_QUALITY_HIGH));
 }
 
 // Blank tile for unlocked achievements without image data.
-wxBitmap BlankBitmap() {
-  wxBitmap bitmap(kIconPx, kIconPx, 32);
+wxBitmap BlankBitmap(int px) {
+  wxBitmap bitmap(px, px, 32);
   wxMemoryDC dc(bitmap);
   dc.SetBackground(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
   dc.Clear();
@@ -105,8 +106,8 @@ wxBitmap BlankBitmap() {
 
 // "?" tile for locked achievements without image data (same idiom as the
 // library/install placeholders).
-wxBitmap QuestionBitmap() {
-  wxBitmap bitmap(kIconPx, kIconPx, 32);
+wxBitmap QuestionBitmap(int px) {
+  wxBitmap bitmap(px, px, 32);
   wxMemoryDC dc(bitmap);
   dc.SetBackground(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
   dc.Clear();
@@ -115,23 +116,26 @@ wxBitmap QuestionBitmap() {
   font.MakeBold();
   dc.SetFont(font);
   dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
-  dc.DrawLabel("?", wxRect(0, 0, kIconPx, kIconPx),
+  dc.DrawLabel("?", wxRect(0, 0, px, px),
                wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
   dc.SelectObject(wxNullBitmap);
   return bitmap;
 }
 
-// Checkmark tile for unlocked achievements without image data.
-wxBitmap CheckBitmap() {
-  wxBitmap bitmap(kIconPx, kIconPx, 32);
+// Checkmark tile for unlocked achievements without image data. Drawn
+// proportionally so it scales with the icon size (identical at 64px).
+wxBitmap CheckBitmap(int px) {
+  wxBitmap bitmap(px, px, 32);
   wxMemoryDC dc(bitmap);
   dc.SetBackground(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
   dc.Clear();
-  dc.SetPen(wxPen(wxColour(0x30, 0xA0, 0x30), 6, wxPENSTYLE_SOLID));
-  dc.DrawLine(kIconPx / 2 - 14, kIconPx / 2 + 1, kIconPx / 2 - 4,
-              kIconPx / 2 + 11);
-  dc.DrawLine(kIconPx / 2 - 4, kIconPx / 2 + 11, kIconPx / 2 + 15,
-              kIconPx / 2 - 12);
+  dc.SetPen(wxPen(wxColour(0x30, 0xA0, 0x30), std::max(1, px * 6 / 64),
+                  wxPENSTYLE_SOLID));
+  const int h = px / 2;
+  dc.DrawLine(h + px * -14 / 64, h + px * 1 / 64, h + px * -4 / 64,
+              h + px * 11 / 64);
+  dc.DrawLine(h + px * -4 / 64, h + px * 11 / 64, h + px * 15 / 64,
+              h + px * -12 / 64);
   dc.SelectObject(wxNullBitmap);
   return bitmap;
 }
@@ -273,17 +277,17 @@ class WxGameContentDialog : public wxDialog {
     // gamerscore summary text).
     RefreshAchievements();
     auto* outer = new wxBoxSizer(wxVERTICAL);
-    outer->Add(book_, 1, wxEXPAND | wxALL, 8);
+    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
     auto* close_button = new wxButton(this, wxID_CLOSE, "Close");
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    buttons->Add(close_button, 0, wxRIGHT | wxBOTTOM, 8);
+    buttons->Add(close_button, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
     outer->Add(buttons, 0, wxEXPAND);
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 780);
-    size.y = std::min(size.y, 620);
+    size.x = std::min(size.x, FromDIP(780));
+    size.y = std::min(size.y, FromDIP(620));
     SetSize(size);
     close_button->Bind(
         wxEVT_BUTTON, [this](wxCommandEvent&) { Close(); }, wxID_CLOSE);
@@ -355,9 +359,9 @@ class WxGameContentDialog : public wxDialog {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     auto* top = new wxBoxSizer(wxHORIZONTAL);
     top->Add(new wxStaticText(page, wxID_ANY, "Profile:"), 0,
-             wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+             wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     profile_choice_ = new wxChoice(page, wxID_ANY);
-    top->Add(profile_choice_, 0, wxRIGHT, 16);
+    top->Add(profile_choice_, 0, wxRIGHT, FromDIP(16));
     info_choice_ = new wxChoice(page, wxID_ANY);
     info_choice_->Append("Default");
     info_choice_->Append("Unlocked info");
@@ -373,23 +377,23 @@ class WxGameContentDialog : public wxDialog {
     ach_summary_->SetMinSize(
         ach_summary_->GetTextExtent("Unlocked 888/888 (88888/88888 G)"));
     top->AddStretchSpacer();
-    top->Add(ach_summary_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
-    sizer->Add(top, 0, wxEXPAND | wxALL, 8);
+    top->Add(ach_summary_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+    sizer->Add(top, 0, wxEXPAND | wxALL, FromDIP(8));
     list_ = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                            wxLC_REPORT | wxLC_SINGLE_SEL);
-    list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, kIconPx + 6);
-    list_->InsertColumn(1, "Achievement", wxLIST_FORMAT_LEFT, 300);
-    list_->InsertColumn(2, "Gamerscore", wxLIST_FORMAT_LEFT, 90);
-    list_->InsertColumn(3, "Unlocked", wxLIST_FORMAT_LEFT, 220);
-    images_ = new wxImageList(kIconPx, kIconPx, true);
-    images_->Add(QuestionBitmap());
-    images_->Add(CheckBitmap());
+    list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, FromDIP(kIconPx + 6));
+    list_->InsertColumn(1, "Achievement", wxLIST_FORMAT_LEFT, FromDIP(300));
+    list_->InsertColumn(2, "Gamerscore", wxLIST_FORMAT_LEFT, FromDIP(90));
+    list_->InsertColumn(3, "Unlocked", wxLIST_FORMAT_LEFT, FromDIP(220));
+    images_ = new wxImageList(FromDIP(kIconPx), FromDIP(kIconPx), true);
+    images_->Add(QuestionBitmap(FromDIP(kIconPx)));
+    images_->Add(CheckBitmap(FromDIP(kIconPx)));
     list_->AssignImageList(images_, wxIMAGE_LIST_SMALL);
-    sizer->Add(list_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+    sizer->Add(list_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
     ach_hint_ =
         new wxStaticText(page, wxID_ANY, "No achievements data.",
                          wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
-    sizer->Add(ach_hint_, 0, wxALIGN_CENTER | wxBOTTOM, 8);
+    sizer->Add(ach_hint_, 0, wxALIGN_CENTER | wxBOTTOM, FromDIP(8));
     page->SetSizer(sizer);
     book_->AddPage(page, "Achievements", true);
     profile_choice_->Bind(wxEVT_CHOICE, &WxGameContentDialog::OnProfile, this);
@@ -411,8 +415,8 @@ class WxGameContentDialog : public wxDialog {
   void PopulateAchievements() {
     list_->DeleteAllItems();
     images_->RemoveAll();
-    images_->Add(QuestionBitmap());
-    images_->Add(CheckBitmap());
+    images_->Add(QuestionBitmap(FromDIP(kIconPx)));
+    images_->Add(CheckBitmap(FromDIP(kIconPx)));
     rows_.clear();
     if (profile_choice_->GetSelection() >= 0 &&
         size_t(profile_choice_->GetSelection()) < profile_xuids_.size()) {
@@ -445,7 +449,8 @@ class WxGameContentDialog : public wxDialog {
       const bool locked = !unlocked;
       if (!rows_[i].icon.empty()) {
         wxBitmap bitmap = BitmapFromBytes(
-            rows_[i].icon, locked && mode != AchInfoMode::kUnlocked);
+            rows_[i].icon, locked && mode != AchInfoMode::kUnlocked,
+            FromDIP(kIconPx));
         if (bitmap.IsOk()) {
           index = images_->Add(bitmap);
         } else if (locked) {
@@ -481,26 +486,27 @@ class WxGameContentDialog : public wxDialog {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     auto* top = new wxBoxSizer(wxHORIZONTAL);
     top->Add(new wxStaticText(page, wxID_ANY, "Profile:"), 0,
-             wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+             wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     save_choice_ = new wxChoice(page, wxID_ANY);
-    top->Add(save_choice_, 0, wxRIGHT, 16);
-    sizer->Add(top, 0, wxEXPAND | wxALL, 8);
+    top->Add(save_choice_, 0, wxRIGHT, FromDIP(16));
+    sizer->Add(top, 0, wxEXPAND | wxALL, FromDIP(8));
     save_list_ = new wxListCtrl(page, wxID_ANY, wxDefaultPosition,
                                 wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
-    save_list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, kIconPx + 6);
-    save_list_->InsertColumn(1, "Save", wxLIST_FORMAT_LEFT, 260);
-    save_list_->InsertColumn(2, "Size", wxLIST_FORMAT_LEFT, 90);
-    save_list_->InsertColumn(3, "Modified", wxLIST_FORMAT_LEFT, 140);
-    save_images_ = new wxImageList(kIconPx, kIconPx, true);
-    save_images_->Add(BlankBitmap());
+    save_list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, FromDIP(kIconPx + 6));
+    save_list_->InsertColumn(1, "Save", wxLIST_FORMAT_LEFT, FromDIP(260));
+    save_list_->InsertColumn(2, "Size", wxLIST_FORMAT_LEFT, FromDIP(90));
+    save_list_->InsertColumn(3, "Modified", wxLIST_FORMAT_LEFT, FromDIP(140));
+    save_images_ = new wxImageList(FromDIP(kIconPx), FromDIP(kIconPx), true);
+    save_images_->Add(BlankBitmap(FromDIP(kIconPx)));
     save_list_->AssignImageList(save_images_, wxIMAGE_LIST_SMALL);
     save_list_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK,
                      &WxGameContentDialog::OnSaveContext, this);
-    sizer->Add(save_list_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+    sizer->Add(save_list_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,
+               FromDIP(8));
     save_hint_ =
         new wxStaticText(page, wxID_ANY, "No saves, so far.", wxDefaultPosition,
                          wxDefaultSize, wxALIGN_CENTER);
-    sizer->Add(save_hint_, 0, wxALIGN_CENTER | wxBOTTOM, 8);
+    sizer->Add(save_hint_, 0, wxALIGN_CENTER | wxBOTTOM, FromDIP(8));
     page->SetSizer(sizer);
     book_->AddPage(page, "Saves");
     save_choice_->Bind(wxEVT_CHOICE, &WxGameContentDialog::OnSaveProfile, this);
@@ -528,7 +534,7 @@ class WxGameContentDialog : public wxDialog {
   void PopulateSaves() {
     save_list_->DeleteAllItems();
     save_images_->RemoveAll();
-    save_images_->Add(BlankBitmap());
+    save_images_->Add(BlankBitmap(FromDIP(kIconPx)));
     save_rows_.clear();
     if (save_choice_->GetSelection() >= 0 &&
         size_t(save_choice_->GetSelection()) < save_xuids_.size()) {
@@ -572,7 +578,8 @@ class WxGameContentDialog : public wxDialog {
       save_list_->SetItem(row, 3, WxLabel(save_rows_[i].modified));
       int index = 0;
       if (!save_rows_[i].icon.empty()) {
-        wxBitmap bitmap = BitmapFromBytes(save_rows_[i].icon, false);
+        wxBitmap bitmap =
+            BitmapFromBytes(save_rows_[i].icon, false, FromDIP(kIconPx));
         if (bitmap.IsOk()) {
           index = save_images_->Add(bitmap);
         }
@@ -625,20 +632,20 @@ class WxGameContentDialog : public wxDialog {
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     tab.list = new wxListCtrl(page, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                               wxLC_REPORT | wxLC_SINGLE_SEL);
-    tab.list->InsertColumn(0, "", wxLIST_FORMAT_LEFT, kIconPx + 6);
-    tab.list->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, 300);
-    tab.list->InsertColumn(2, "Size", wxLIST_FORMAT_LEFT, 90);
-    tab.list->InsertColumn(3, "File", wxLIST_FORMAT_LEFT, 200);
-    tab.images = new wxImageList(kIconPx, kIconPx, true);
-    tab.images->Add(BlankBitmap());
+    tab.list->InsertColumn(0, "", wxLIST_FORMAT_LEFT, FromDIP(kIconPx + 6));
+    tab.list->InsertColumn(1, "Name", wxLIST_FORMAT_LEFT, FromDIP(300));
+    tab.list->InsertColumn(2, "Size", wxLIST_FORMAT_LEFT, FromDIP(90));
+    tab.list->InsertColumn(3, "File", wxLIST_FORMAT_LEFT, FromDIP(200));
+    tab.images = new wxImageList(FromDIP(kIconPx), FromDIP(kIconPx), true);
+    tab.images->Add(BlankBitmap(FromDIP(kIconPx)));
     tab.list->AssignImageList(tab.images, wxIMAGE_LIST_SMALL);
     tab.list->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK,
                    &WxGameContentDialog::OnContentContext, this);
-    sizer->Add(tab.list, 1, wxEXPAND | wxALL, 8);
+    sizer->Add(tab.list, 1, wxEXPAND | wxALL, FromDIP(8));
     auto* hint =
         new wxStaticText(page, wxID_ANY, "Nothing installed.",
                          wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
-    sizer->Add(hint, 0, wxALIGN_CENTER | wxBOTTOM, 8);
+    sizer->Add(hint, 0, wxALIGN_CENTER | wxBOTTOM, FromDIP(8));
     page->SetSizer(sizer);
     book_->AddPage(page, WxLabel(label));
 
@@ -678,7 +685,8 @@ class WxGameContentDialog : public wxDialog {
                         WxLabel(xe::path_to_utf8(tab.rows[i].path.filename())));
       int index = 0;
       if (!tab.rows[i].icon.empty()) {
-        wxBitmap bitmap = BitmapFromBytes(tab.rows[i].icon, false);
+        wxBitmap bitmap =
+            BitmapFromBytes(tab.rows[i].icon, false, FromDIP(kIconPx));
         if (bitmap.IsOk()) {
           index = tab.images->Add(bitmap);
         }

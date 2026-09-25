@@ -93,9 +93,10 @@ bool MatchesFilter(const GameEntry& entry, const std::string& filter) {
 wxBitmap PlaceholderBitmap(int px) {
   wxBitmap bmp(px, px, 32);
   wxMemoryDC dc(bmp);
-  dc.SetBackground(wxBrush(wxColour(0x2A, 0x2A, 0x2A)));
+  dc.SetBackground(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
   dc.Clear();
-  dc.SetTextForeground(wxColour(0x99, 0x99, 0x99));
+  dc.SetTextForeground(
+      wxColour(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT)));
   dc.SetFont(wxFont(px / 3, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL,
                     wxFONTWEIGHT_BOLD));
   dc.DrawLabel("?", wxRect(0, 0, px, px), wxALIGN_CENTER);
@@ -122,23 +123,16 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   search_ = new wxSearchCtrl(this, kIdSearch);
   search_->SetHint("Search library");
   search_->ShowCancelButton(true);
-  bar->Add(add, 0, wxRIGHT, 8);
-  bar->Add(scan, 0, wxRIGHT, 8);
-  bar->Add(mode, 0, wxRIGHT, 8);
+  bar->Add(add, 0, wxRIGHT, FromDIP(8));
+  bar->Add(scan, 0, wxRIGHT, FromDIP(8));
+  bar->Add(mode, 0, wxRIGHT, FromDIP(8));
   bar->Add(search_, 1, wxEXPAND);
   profile_button_ = new wxButton(this, kIdProfile, "Profile");
-  bar->Add(profile_button_, 0, wxLEFT, 8);
+  bar->Add(profile_button_, 0, wxLEFT, FromDIP(8));
 
   book_ = new wxSimplebook(this, wxID_ANY);
   table_ = new wxListCtrl(book_, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                           wxLC_REPORT | wxLC_SINGLE_SEL);
-  table_->InsertColumn(kColIcon, "", wxLIST_FORMAT_LEFT, 40);
-  table_->InsertColumn(kColStatus, "", wxLIST_FORMAT_LEFT, 40);
-  table_->InsertColumn(kColTitleId, "Title ID", wxLIST_FORMAT_LEFT, 90);
-  table_->InsertColumn(kColMediaId, "Media ID", wxLIST_FORMAT_LEFT, 90);
-  table_->InsertColumn(kColTitle, "Title", wxLIST_FORMAT_LEFT, 260);
-  table_->InsertColumn(kColLocation, "Location", wxLIST_FORMAT_LEFT, 320);
-  table_->InsertColumn(kColLastPlayed, "Last Played", wxLIST_FORMAT_LEFT, 140);
   grid_ = new wxListCtrl(book_, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                          wxLC_ICON | wxLC_SINGLE_SEL | wxLC_AUTOARRANGE);
   book_->AddPage(table_, "List");
@@ -148,21 +142,14 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
                                  "No games yet. Use Add Game or Scan Folder.");
 
   auto sizer = new wxBoxSizer(wxVERTICAL);
-  sizer->Add(bar, 0, wxEXPAND | wxALL, 8);
-  sizer->Add(book_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-  sizer->Add(empty_hint_, 0, wxALIGN_CENTER | wxBOTTOM, 8);
+  sizer->Add(bar, 0, wxEXPAND | wxALL, FromDIP(8));
+  sizer->Add(book_, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+  sizer->Add(empty_hint_, 0, wxALIGN_CENTER | wxBOTTOM, FromDIP(8));
   SetSizer(sizer);
 
-  small_images_ = new wxImageList(kSmallIconPx, kSmallIconPx, true);
-  small_images_->Add(PlaceholderBitmap(kSmallIconPx));
-  big_images_ = new wxImageList(kBigIconPx, kBigIconPx, true);
-  big_images_->Add(PlaceholderBitmap(kBigIconPx));
-  for (size_t i = 0; i < 5; ++i) {
-    compat_balls_[i] =
-        MakeCompatBall(static_cast<CompatRating>(i), kStatusBallPx);
-    compat_grid_balls_[i] =
-        MakeCompatBall(static_cast<CompatRating>(i), kGridBallPx);
-  }
+  ApplyDpi();
+  small_images_ = new wxImageList(small_icon_px_, small_icon_px_, true);
+  big_images_ = new wxImageList(big_icon_px_, big_icon_px_, true);
   table_->AssignImageList(small_images_, wxIMAGE_LIST_SMALL);
   grid_->AssignImageList(big_images_, wxIMAGE_LIST_NORMAL);
 
@@ -178,6 +165,9 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
   grid_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverGrid, this);
+  // OS theme flips rebuild theme-baked bitmaps through the DPI path (sizes
+  // recompute identically; colors pick up the new system palette).
+  Bind(wxEVT_SYS_COLOUR_CHANGED, &WxLibraryView::OnSysColourChanged, this);
   table_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
   grid_->Bind(wxEVT_LIST_ITEM_ACTIVATED, &WxLibraryView::OnActivate, this);
   table_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, &WxLibraryView::OnContextTable,
@@ -191,28 +181,80 @@ void WxLibraryView::SetEntries(std::vector<GameEntry> entries) {
   Populate();
 }
 
+void WxLibraryView::ApplyDpi() {
+  small_icon_px_ = FromDIP(kSmallIconPx);
+  big_icon_px_ = FromDIP(kBigIconPx);
+  status_ball_px_ = FromDIP(kStatusBallPx);
+  grid_ball_px_ = FromDIP(kGridBallPx);
+  grid_inset_px_ = FromDIP(kGridBallInsetPx);
+  for (size_t i = 0; i < 5; ++i) {
+    compat_balls_[i] =
+        MakeCompatBall(static_cast<CompatRating>(i), status_ball_px_);
+    compat_grid_balls_[i] =
+        MakeCompatBall(static_cast<CompatRating>(i), grid_ball_px_);
+  }
+  ApplyColumnWidths();
+}
+
+void WxLibraryView::ApplyColumnWidths() {
+  const struct {
+    int id;
+    const char* label;
+    int width;
+  } columns[] = {
+      {kColIcon, "", 40},
+      {kColStatus, "", 40},
+      {kColTitleId, "Title ID", 90},
+      {kColMediaId, "Media ID", 90},
+      {kColTitle, "Title", 260},
+      {kColLocation, "Location", 320},
+      {kColLastPlayed, "Last Played", 140},
+  };
+  for (const auto& column : columns) {
+    const int width = FromDIP(column.width);
+    if (table_->GetColumnCount() <= column.id) {
+      table_->InsertColumn(column.id, column.label, wxLIST_FORMAT_LEFT, width);
+    } else {
+      table_->SetColumnWidth(column.id, width);
+    }
+  }
+}
+
+void WxLibraryView::RefreshDpi() {
+  ApplyDpi();
+  // Image lists are fixed-size: recreate and reassign (AssignImageList
+  // deletes the previous lists).
+  small_images_ = new wxImageList(small_icon_px_, small_icon_px_, true);
+  big_images_ = new wxImageList(big_icon_px_, big_icon_px_, true);
+  table_->AssignImageList(small_images_, wxIMAGE_LIST_SMALL);
+  grid_->AssignImageList(big_images_, wxIMAGE_LIST_NORMAL);
+  RebuildIcons();
+  Populate();
+  Layout();
+}
+
 void WxLibraryView::RebuildIcons() {
   small_images_->RemoveAll();
   big_images_->RemoveAll();
-  small_images_->Add(PlaceholderBitmap(kSmallIconPx));
+  small_images_->Add(PlaceholderBitmap(small_icon_px_));
   // Status balls occupy slots 1..5 so SetItemColumnImage can address them
-  // by rating rank; entry icons follow. The list requires 32px bitmaps, so
-  // the 16px balls are centered on transparent canvases.
+  // by rating rank; entry icons follow. The list requires icon-sized
+  // bitmaps, so the balls are centered on transparent canvases.
   for (size_t i = 0; i < 5; ++i) {
-    wxImage canvas(kSmallIconPx, kSmallIconPx);
+    wxImage canvas(small_icon_px_, small_icon_px_);
     canvas.SetAlpha();
     std::memset(canvas.GetAlpha(), 0,
-                static_cast<size_t>(kSmallIconPx) * kSmallIconPx);
+                static_cast<size_t>(small_icon_px_) * small_icon_px_);
     wxBitmap padded(canvas);
     {
       wxMemoryDC dc(padded);
-      const int off = (kSmallIconPx - kStatusBallPx) / 2;
+      const int off = (small_icon_px_ - status_ball_px_) / 2;
       dc.DrawBitmap(compat_balls_[i], off, off, true);
       dc.SelectObject(wxNullBitmap);
     }
     small_images_->Add(padded);
   }
-  big_images_->Add(PlaceholderBitmap(kBigIconPx));
+  big_images_->Add(PlaceholderBitmap(big_icon_px_));
   icon_index_.assign(entries_.size(), 0);
   big_icon_index_.assign(entries_.size(), 0);
   for (size_t i = 0; i < entries_.size(); i++) {
@@ -247,16 +289,16 @@ void WxLibraryView::IconFor(const GameEntry& entry, int* small_out,
     *big_out = 0;
     return;
   }
-  int small_idx = small_images_->Add(
-      wxBitmap(image.Scale(kSmallIconPx, kSmallIconPx, wxIMAGE_QUALITY_HIGH)));
+  int small_idx = small_images_->Add(wxBitmap(
+      image.Scale(small_icon_px_, small_icon_px_, wxIMAGE_QUALITY_HIGH)));
   // Corner badge with the entry's compatibility rating.
-  wxBitmap big(image.Scale(kBigIconPx, kBigIconPx, wxIMAGE_QUALITY_HIGH));
+  wxBitmap big(image.Scale(big_icon_px_, big_icon_px_, wxIMAGE_QUALITY_HIGH));
   {
     const wxBitmap& ball = compat_grid_balls_[static_cast<size_t>(
         CompatRatingFromId(entry.compat))];
     wxMemoryDC dc(big);
-    dc.DrawBitmap(ball, kBigIconPx - ball.GetWidth() - kGridBallInsetPx,
-                  kBigIconPx - ball.GetHeight() - kGridBallInsetPx, true);
+    dc.DrawBitmap(ball, big_icon_px_ - ball.GetWidth() - grid_inset_px_,
+                  big_icon_px_ - ball.GetHeight() - grid_inset_px_, true);
     dc.SelectObject(wxNullBitmap);
   }
   int big_idx = big_images_->Add(big);
@@ -480,6 +522,11 @@ void WxLibraryView::OnHoverTable(wxMouseEvent& event) {
       table_->SetToolTip(tip);
     }
   }
+  event.Skip();
+}
+
+void WxLibraryView::OnSysColourChanged(wxSysColourChangedEvent& event) {
+  RefreshDpi();
   event.Skip();
 }
 

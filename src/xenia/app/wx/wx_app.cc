@@ -1,6 +1,7 @@
 #include "xenia/app/wx/wx_app.h"
 
 #include "xenia/app/wx/wx_host.h"
+#include "xenia/app/wx/wx_window.h"
 #include "xenia/base/console.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/platform.h"
@@ -28,6 +29,8 @@ bool WxApp::OnInit() {
   if (!g_host_params || !g_host_params->app) {
     return false;
   }
+  // Theme before any window exists so everything is born themed.
+  ApplyUiTheme();
   if (!g_host_params->app->OnInitialize()) {
     g_host_params->result = EXIT_FAILURE;
     return false;
