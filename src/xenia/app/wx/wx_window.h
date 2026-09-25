@@ -130,6 +130,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnViewContent(size_t index) override;
   void OnGameConfig(size_t index) override;
   void OnPatches(size_t index) override;
+  void OnEditGame(size_t index) override;
   void OnViewCompatReport(size_t index) override;
   void OnSearchCompatIssues(size_t index) override;
 

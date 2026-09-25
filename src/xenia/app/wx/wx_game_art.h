@@ -30,6 +30,15 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
                    const std::vector<uint8_t>& icon_bytes,
                    const std::string& title_id);
 
+// Validates picked bytes decode as an image and saves them over the cached
+// icon (PNG conversion). Used by the Edit Game Info art picker.
+bool SaveIconFile(const std::vector<uint8_t>& bytes,
+                  const std::filesystem::path& dest);
+// Validates picked bytes decode as an image and saves them raw over the
+// cached background (JPEG stays JPEG).
+bool SaveBackgroundFile(const std::vector<uint8_t>& bytes,
+                        const std::filesystem::path& dest);
+
 }  // namespace wx_ui
 }  // namespace app
 }  // namespace xe

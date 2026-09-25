@@ -24,6 +24,8 @@ add_library(xenia-app-wx OBJECT
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_config_dialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_content_dialog.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_content_dialog.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_info_dialog.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_info_dialog.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_art.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_art.h
   ${CMAKE_CURRENT_SOURCE_DIR}/wx_game_model.h
