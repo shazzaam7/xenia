@@ -39,6 +39,7 @@
 #include <cstdio>
 
 #include "xenia/app/wx/wx_game_content_dialog.h"
+#include "xenia/app/wx/wx_game_info_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_library_store.h"
 #include "xenia/app/wx/wx_patch_dialog.h"
@@ -1081,6 +1082,21 @@ void WxWindow::OnPatches(size_t index) {
   }
   ShowPatchDialog(library_view_, library_storage_root_ / "patches",
                   entry->title_id, entry->name);
+}
+
+void WxWindow::OnEditGame(size_t index) {
+  if (index >= library_entries_.size() || !library_view_ ||
+      library_storage_root_.empty()) {
+    return;
+  }
+  GameEntry entry = library_entries_[index];
+  // Title ID is immutable in the dialog, so the index stays valid.
+  if (!ShowGameInfoDialog(library_view_, library_storage_root_, &entry)) {
+    return;
+  }
+  library_entries_[index] = entry;
+  WriteEntry(library_storage_root_, entry);
+  library_view_->SetEntries(library_entries_);
 }
 
 void WxWindow::RefreshCompat(bool force) {

@@ -49,6 +49,8 @@ class WxLibraryView : public wxPanel {
     virtual void OnGameConfig(size_t index) = 0;
     // Per-title patch editor (the game library's right-click entry).
     virtual void OnPatches(size_t index) = 0;
+    // Per-title info editor: name, discs, artwork (right-click entry).
+    virtual void OnEditGame(size_t index) = 0;
     // Open the compatibility report for a title with one.
     virtual void OnViewCompatReport(size_t index) = 0;
     // Open an issue search for a title without a report.
@@ -126,8 +128,8 @@ class WxLibraryView : public wxPanel {
   int small_icon_px_ = 32;
   int big_icon_px_ = 128;
   int status_ball_px_ = 16;
-  int grid_ball_px_ = 24;
-  int grid_inset_px_ = 6;
+  int grid_ball_px_ = 12;
+  int grid_inset_px_ = 3;
   // entry index -> image list position (small_images_).
   std::vector<int> icon_index_;
   // entry index -> image list position (big_images_, grid view). Tracked

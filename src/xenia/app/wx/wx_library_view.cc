@@ -50,12 +50,14 @@ namespace wx_ui {
 namespace {
 
 constexpr int kSmallIconPx = 32;
-constexpr int kBigIconPx = 128;
+// 96, not 128: embedded icons are 64px native, and 1.5x upscale stays
+// noticeably sharper than 2x while hi-res art still downscales cleanly.
+constexpr int kBigIconPx = 96;
 // Status ball diameter: fits the 32px row with padding.
 constexpr int kStatusBallPx = 16;
-// Grid badge diameter and corner inset.
-constexpr int kGridBallPx = 24;
-constexpr int kGridBallInsetPx = 6;
+// Grid badge diameter and corner inset, proportional to the 64px tile.
+constexpr int kGridBallPx = 12;
+constexpr int kGridBallInsetPx = 3;
 
 enum : int {
   kIdSearch = wxID_HIGHEST + 100,
@@ -72,6 +74,7 @@ enum : int {
   kIdMenuPatches,
   kIdMenuCompatReport,
   kIdMenuCompatSearch,
+  kIdMenuEditInfo,
 };
 
 bool MatchesFilter(const GameEntry& entry, const std::string& filter) {
@@ -160,8 +163,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnProfile, this, kIdProfile);
-  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot,
-       kIdMenuCompatSearch);
+  Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuEditInfo);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
   grid_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverGrid, this);
@@ -334,6 +336,11 @@ void WxLibraryView::ApplySort() {
     std::transform(y.begin(), y.end(), y.begin(), ::tolower);
     return sort_ascending_ ? x < y : x > y;
   };
+  auto by_title_id = [&](size_t a, size_t b) {
+    const auto& x = entries_[a].title_id;
+    const auto& y = entries_[b].title_id;
+    return sort_ascending_ ? x < y : x > y;
+  };
   auto by_played = [&](size_t a, size_t b) {
     return sort_ascending_ ? entries_[a].last_play < entries_[b].last_play
                            : entries_[a].last_play > entries_[b].last_play;
@@ -352,6 +359,8 @@ void WxLibraryView::ApplySort() {
     sort_ascending_ = true;
     std::sort(order_.begin(), order_.end(), by_title);
     sort_ascending_ = asc;
+  } else if (sort_column_ == kColTitleId) {
+    std::sort(order_.begin(), order_.end(), by_title_id);
   } else if (sort_column_ == kColLastPlayed) {
     std::sort(order_.begin(), order_.end(), by_played);
   } else if (sort_column_ == kColStatus) {
@@ -455,6 +464,7 @@ void WxLibraryView::ShowContext(wxListCtrl* view, const wxPoint& pos) {
   menu.AppendSeparator();
   menu.Append(kIdMenuConfig, "Game Config...");
   menu.Append(kIdMenuPatches, "Patches...");
+  menu.Append(kIdMenuEditInfo, "Edit Game Info...");
   const auto& entry = entries_[menu_index_];
   if (!entry.compat.url.empty()) {
     menu.Append(kIdMenuCompatReport, "View Compatibility Report...");
@@ -488,7 +498,8 @@ void WxLibraryView::OnMode(wxCommandEvent& event) {
 
 void WxLibraryView::OnSortColumn(wxListEvent& event) {
   int col = event.GetColumn();
-  if (col != kColTitle && col != kColLastPlayed && col != kColStatus) {
+  if (col != kColTitle && col != kColTitleId && col != kColLastPlayed &&
+      col != kColStatus) {
     return;
   }
   if (sort_column_ == col) {
@@ -616,6 +627,9 @@ void WxLibraryView::OnMenu(wxCommandEvent& event) {
       break;
     case kIdMenuPatches:
       delegate_->OnPatches(menu_index_);
+      break;
+    case kIdMenuEditInfo:
+      delegate_->OnEditGame(menu_index_);
       break;
     case kIdMenuCompatReport:
       delegate_->OnViewCompatReport(menu_index_);
