@@ -36,6 +36,9 @@ struct GameMeta {
   // 8 uppercase hex chars. Empty when the file has no usable title ID.
   std::string title_id;
   std::string media_id = "00000000";
+  // "major.minor.build.qfe" from the XEX/container version. Empty when the
+  // file carries no readable version.
+  std::string version;
   std::string name;
   int disc_number = 1;
   int disc_count = 1;

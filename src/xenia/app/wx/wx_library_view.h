@@ -70,7 +70,6 @@ class WxLibraryView : public wxPanel {
     kColIcon = 0,
     kColStatus,
     kColTitleId,
-    kColMediaId,
     kColTitle,
     kColLocation,
     kColLastPlayed,
