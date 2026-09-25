@@ -10,6 +10,7 @@
 #include "xenia/app/wx/wx_library_store.h"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 
 #include "third_party/tomlplusplus/toml.hpp"
@@ -33,6 +34,23 @@ std::string GameEntry::LocationLabel() const {
 
 namespace {
 
+// Uppercase hex folder names: the scan emits them, but hand-made folders
+// may not be, and Linux filesystems are case-sensitive.
+std::string NormalizeTitleId(std::string title_id) {
+  for (char& c : title_id) {
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  }
+  return title_id;
+}
+
+// '/' separators avoid TOML escaping and round-trip through std::filesystem
+// on every platform.
+std::string PathToToml(const std::filesystem::path& path) {
+  std::string s = xe::path_to_utf8(path);
+  std::replace(s.begin(), s.end(), '\\', '/');
+  return s;
+}
+
 bool PruneEntry(GameEntry& entry) {
   std::error_code ec = {};
   std::vector<GameDisc> kept;
@@ -49,171 +67,257 @@ bool PruneEntry(GameEntry& entry) {
   return !entry.discs.empty();
 }
 
+bool ReadEntry(const std::filesystem::path& info_path,
+               const std::string& title_id, GameEntry& entry_out) {
+  toml::table parsed;
+  try {
+    parsed = toml::parse_file(xe::path_to_utf8(info_path));
+  } catch (const toml::parse_error& e) {
+    XELOGE("Library: cannot parse {}: {}", xe::path_to_utf8(info_path),
+           e.what());
+    return false;
+  }
+  GameEntry entry;
+  entry.title_id = title_id;
+  if (auto v = parsed.get_as<std::string>("name")) {
+    entry.name = v->get();
+  }
+  if (auto c = parsed.get_as<toml::table>("compat")) {
+    if (auto v = c->get_as<std::string>("state")) {
+      entry.compat.state = v->get();
+    }
+    if (auto v = c->get_as<std::string>("url")) {
+      entry.compat.url = v->get();
+    }
+  }
+  if (auto v = parsed.get_as<int64_t>("last_play")) {
+    entry.last_play = std::time_t(v->get());
+  }
+  if (auto v = parsed.get_as<int64_t>("last_played_disc")) {
+    entry.last_played_disc = int(v->get());
+  }
+  if (auto arr = parsed.get_as<toml::array>("discs")) {
+    for (const auto& d : *arr) {
+      if (!d.is_table()) {
+        continue;
+      }
+      const toml::table* dt = d.as_table();
+      GameDisc disc;
+      if (auto v = dt->get_as<int64_t>("number")) {
+        disc.number = int(v->get());
+      } else {
+        disc.number = int(entry.discs.size()) + 1;
+      }
+      if (auto v = dt->get_as<std::string>("label")) {
+        disc.label = v->get();
+      }
+      if (auto v = dt->get_as<std::string>("path")) {
+        disc.path = xe::to_path(v->get());
+      }
+      if (auto v = dt->get_as<std::string>("media_id")) {
+        disc.media_id = v->get();
+      }
+      if (auto v = dt->get_as<std::string>("version")) {
+        disc.version = v->get();
+      }
+      if (disc.label.empty()) {
+        disc.label = "Disc " + std::to_string(disc.number);
+      }
+      if (disc.media_id.empty()) {
+        disc.media_id = "00000000";
+      }
+      entry.discs.push_back(std::move(disc));
+    }
+  }
+  if (entry.discs.empty()) {
+    return false;
+  }
+  if (entry.last_played_disc < 1) {
+    entry.last_played_disc = 1;
+  }
+  entry_out = std::move(entry);
+  return true;
+}
+
 }  // namespace
 
 bool LoadLibrary(const std::filesystem::path& storage_root,
                  std::vector<GameEntry>& entries_out) {
   entries_out.clear();
-  std::ifstream file(LibraryFile(storage_root));
-  if (!file.is_open()) {
+  std::error_code ec = {};
+  const auto root = LibraryRoot(storage_root);
+  if (!std::filesystem::exists(root, ec)) {
     return true;  // No library yet; not an error.
   }
-  toml::parse_result parsed;
-  try {
-    parsed = toml::parse(file);
-  } catch (toml::parse_error& e) {
-    XELOGE("Cannot parse file: library.toml. Error: {}", e.what());
-    return false;
-  }
-  if (!parsed.is_table()) {
-    return true;
-  }
-  for (const auto& [title_id, node] : *parsed.as_table()) {
-    if (!node.is_table()) {
+  std::vector<std::string> title_ids;
+  for (auto it = std::filesystem::directory_iterator(root, ec);
+       it != std::filesystem::directory_iterator(); ++it) {
+    if (ec) {
+      break;
+    }
+    std::error_code ec2 = {};
+    if (!it->is_directory(ec2)) {
       continue;
     }
-    const toml::table* t = node.as_table();
+    title_ids.push_back(xe::path_to_utf8(it->path().filename()));
+  }
+  std::sort(title_ids.begin(), title_ids.end());
+  for (const auto& title_id : title_ids) {
     GameEntry entry;
-    entry.title_id = std::string(title_id.str());
-    if (auto v = t->get_as<std::string>("name")) {
-      entry.name = v->get();
-    }
-    if (auto arr = t->get_as<toml::array>("media_ids")) {
-      for (const auto& m : *arr) {
-        if (m.is_string()) {
-          entry.media_ids.push_back(std::string(m.as_string()->get()));
-        }
-      }
-    }
-    if (auto v = t->get_as<int64_t>("last_play")) {
-      entry.last_play = std::time_t(v->get());
-    }
-    if (auto v = t->get_as<int64_t>("last_played_disc")) {
-      entry.last_played_disc = int(v->get());
-    }
-    if (auto v = t->get_as<std::string>("compat")) {
-      entry.compat = v->get();
-    }
-    if (auto v = t->get_as<std::string>("compat_url")) {
-      entry.compat_url = v->get();
-    }
-    if (auto arr = t->get_as<toml::array>("discs")) {
-      for (const auto& d : *arr) {
-        if (!d.is_table()) {
-          continue;
-        }
-        const toml::table* dt = d.as_table();
-        GameDisc disc;
-        if (auto v = dt->get_as<int64_t>("number")) {
-          disc.number = int(v->get());
-        } else {
-          disc.number = int(entry.discs.size()) + 1;
-        }
-        if (auto v = dt->get_as<std::string>("label")) {
-          disc.label = v->get();
-        }
-        if (auto v = dt->get_as<std::string>("path")) {
-          disc.path = xe::to_path(v->get());
-        }
-        if (disc.label.empty()) {
-          disc.label = "Disc " + std::to_string(disc.number);
-        }
-        entry.discs.push_back(std::move(disc));
-      }
-    }
-    if (entry.title_id.empty() || entry.discs.empty()) {
+    if (!ReadEntry(InfoPath(storage_root, title_id), NormalizeTitleId(title_id),
+                   entry)) {
       continue;
-    }
-    if (entry.last_played_disc < 1) {
-      entry.last_played_disc = 1;
     }
     if (PruneEntry(entry)) {
       entries_out.push_back(std::move(entry));
+    } else {
+      // All discs vanished: drop the title folder (metadata and artwork).
+      std::error_code ec3 = {};
+      std::filesystem::remove_all(TitleDir(storage_root, title_id), ec3);
     }
   }
   return true;
 }
 
-bool SaveLibrary(const std::filesystem::path& storage_root,
-                 const std::vector<GameEntry>& entries) {
-  auto table = toml::table();
-  for (const auto& entry : entries) {
-    if (entry.title_id.empty() || entry.discs.empty()) {
-      continue;
-    }
-    auto t = toml::table();
-    t.insert("name", entry.name);
-    auto media = toml::array();
-    for (const auto& m : entry.media_ids) {
-      media.push_back(m);
-    }
-    t.insert("media_ids", std::move(media));
-    t.insert("last_play", int64_t(entry.last_play));
-    t.insert("last_played_disc", int64_t(entry.last_played_disc));
-    if (!entry.compat.empty()) {
-      t.insert("compat", entry.compat);
-    }
-    if (!entry.compat_url.empty()) {
-      t.insert("compat_url", entry.compat_url);
-    }
-    auto discs = toml::array();
-    for (const auto& disc : entry.discs) {
-      auto d = toml::table();
-      d.insert("number", int64_t(disc.number));
-      d.insert("label", disc.label);
-      d.insert("path", xe::path_to_utf8(disc.path));
-      discs.push_back(std::move(d));
-    }
-    t.insert("discs", std::move(discs));
-    table.insert(entry.title_id, std::move(t));
-  }
-  std::ofstream file(LibraryFile(storage_root), std::ofstream::trunc);
-  if (!file.is_open()) {
-    XELOGE("Cannot write file: library.toml.");
+bool WriteEntry(const std::filesystem::path& storage_root,
+                const GameEntry& entry) {
+  if (entry.title_id.empty() || entry.discs.empty()) {
     return false;
   }
-  file << table;
+  const auto dir = TitleDir(storage_root, entry.title_id);
+  std::error_code ec = {};
+  std::filesystem::create_directories(dir, ec);
+  if (ec) {
+    XELOGE("Library: cannot create {}: {}", xe::path_to_utf8(dir),
+           ec.message());
+    return false;
+  }
+  auto t = toml::table();
+  t.insert("name", entry.name);
+  if (!entry.compat.state.empty() || !entry.compat.url.empty()) {
+    auto c = toml::table();
+    c.insert("state", entry.compat.state);
+    c.insert("url", entry.compat.url);
+    c.is_inline(true);
+    t.insert("compat", std::move(c));
+  }
+  t.insert("last_play", int64_t(entry.last_play));
+  t.insert("last_played_disc", int64_t(entry.last_played_disc));
+  auto discs = toml::array();
+  for (const auto& disc : entry.discs) {
+    auto d = toml::table();
+    d.insert("number", int64_t(disc.number));
+    d.insert("label", disc.label);
+    d.insert("path", PathToToml(disc.path));
+    d.insert("media_id", disc.media_id);
+    d.insert("version", disc.version);
+    d.is_inline(true);
+    discs.push_back(std::move(d));
+  }
+  t.insert("discs", std::move(discs));
+  const auto final_path = dir / "info.toml";
+  const auto tmp_path = dir / "info.toml.tmp";
+  {
+    std::ofstream file(tmp_path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open()) {
+      XELOGE("Library: cannot write {}.", xe::path_to_utf8(tmp_path));
+      return false;
+    }
+    file << t;
+    if (!file) {
+      XELOGE("Library: write failed for {}.", xe::path_to_utf8(tmp_path));
+      return false;
+    }
+  }
+  std::filesystem::rename(tmp_path, final_path, ec);
+  if (ec) {
+    XELOGE("Library: cannot replace {}: {}", xe::path_to_utf8(final_path),
+           ec.message());
+    std::filesystem::remove(tmp_path, ec);
+    return false;
+  }
   return true;
 }
 
-void MergeScannedGame(std::vector<GameEntry>& entries,
+bool RemoveTitle(const std::filesystem::path& storage_root,
+                 const std::string& title_id) {
+  if (title_id.empty()) {
+    return false;
+  }
+  std::error_code ec = {};
+  std::filesystem::remove_all(TitleDir(storage_root, title_id), ec);
+  if (ec) {
+    XELOGE("Library: cannot remove {}: {}", title_id, ec.message());
+    return false;
+  }
+  return true;
+}
+
+const GameEntry* FindEntry(const std::vector<GameEntry>& entries,
+                           const std::string& title_id) {
+  const std::string want = NormalizeTitleId(title_id);
+  for (const auto& entry : entries) {
+    if (NormalizeTitleId(entry.title_id) == want) {
+      return &entry;
+    }
+  }
+  return nullptr;
+}
+
+GameEntry* FindEntry(std::vector<GameEntry>& entries,
+                     const std::string& title_id) {
+  return const_cast<GameEntry*>(
+      FindEntry(const_cast<const std::vector<GameEntry>&>(entries), title_id));
+}
+
+bool MergeScannedGame(std::vector<GameEntry>& entries,
                       const std::filesystem::path& disc_path,
                       const std::string& title_id, const std::string& media_id,
-                      const std::string& name) {
-  if (title_id.empty()) {
-    return;
+                      const std::string& version, const std::string& name) {
+  const std::string id = NormalizeTitleId(title_id);
+  if (id.empty() || disc_path.empty()) {
+    return false;
   }
   auto same_path = [&](const std::filesystem::path& a) {
     std::error_code ec = {};
     return std::filesystem::equivalent(a, disc_path, ec);
   };
   for (auto& entry : entries) {
-    if (entry.title_id != title_id) {
+    if (NormalizeTitleId(entry.title_id) != id) {
       continue;
     }
-    for (const auto& disc : entry.discs) {
+    for (auto& disc : entry.discs) {
       if (same_path(disc.path)) {
-        return;  // Already listed.
+        // Already listed: refresh per-disc metadata from the rescan.
+        bool changed = false;
+        if (!media_id.empty() && disc.media_id != media_id) {
+          disc.media_id = media_id;
+          changed = true;
+        }
+        if (disc.version != version) {
+          disc.version = version;
+          changed = true;
+        }
+        return changed;
       }
     }
-    if (!media_id.empty() && media_id != "00000000" &&
-        std::find(entry.media_ids.begin(), entry.media_ids.end(), media_id) ==
-            entry.media_ids.end()) {
-      entry.media_ids.push_back(media_id);
-    }
     int number = int(entry.discs.size()) + 1;
-    entry.discs.push_back(
-        GameDisc{number, "Disc " + std::to_string(number), disc_path});
-    return;
+    GameDisc disc{number, "Disc " + std::to_string(number), disc_path,
+                  media_id.empty() ? "00000000" : media_id, version};
+    entry.discs.push_back(std::move(disc));
+    if (entry.name.empty() && !name.empty()) {
+      entry.name = name;
+    }
+    return true;
   }
   GameEntry entry;
-  entry.title_id = title_id;
+  entry.title_id = id;
   entry.name = name;
-  if (!media_id.empty()) {
-    entry.media_ids.push_back(media_id);
-  }
-  entry.discs.push_back(GameDisc{1, "Disc 1", disc_path});
+  entry.discs.push_back(GameDisc{1, "Disc 1", disc_path,
+                                 media_id.empty() ? "00000000" : media_id,
+                                 version});
   entries.push_back(std::move(entry));
+  return true;
 }
 
 }  // namespace wx_ui

@@ -205,7 +205,6 @@ void WxLibraryView::ApplyColumnWidths() {
       {kColIcon, "", 40},
       {kColStatus, "", 40},
       {kColTitleId, "Title ID", 90},
-      {kColMediaId, "Media ID", 90},
       {kColTitle, "Title", 260},
       {kColLocation, "Location", 320},
       {kColLastPlayed, "Last Played", 140},
@@ -263,9 +262,10 @@ void WxLibraryView::RebuildIcons() {
 }
 
 CompatRating WxLibraryView::EntryRating(size_t index) const {
-  // Ratings persist on the entry itself (library.toml); empty means Unknown.
-  return index < entries_.size() ? CompatRatingFromId(entries_[index].compat)
-                                 : CompatRating::kUnknown;
+  // Ratings persist on the entry itself (info.toml); empty means Unknown.
+  return index < entries_.size()
+             ? CompatRatingFromId(entries_[index].compat.state)
+             : CompatRating::kUnknown;
 }
 
 void WxLibraryView::IconFor(const GameEntry& entry, int* small_out,
@@ -295,7 +295,7 @@ void WxLibraryView::IconFor(const GameEntry& entry, int* small_out,
   wxBitmap big(image.Scale(big_icon_px_, big_icon_px_, wxIMAGE_QUALITY_HIGH));
   {
     const wxBitmap& ball = compat_grid_balls_[static_cast<size_t>(
-        CompatRatingFromId(entry.compat))];
+        CompatRatingFromId(entry.compat.state))];
     wxMemoryDC dc(big);
     dc.DrawBitmap(ball, big_icon_px_ - ball.GetWidth() - grid_inset_px_,
                   big_icon_px_ - ball.GetHeight() - grid_inset_px_, true);
@@ -374,7 +374,6 @@ void WxLibraryView::Populate() {
     table_->SetItemColumnImage(item, kColStatus,
                                1 + static_cast<int>(EntryRating(index)));
     table_->SetItem(item, kColTitleId, WxLabel(e.title_id));
-    table_->SetItem(item, kColMediaId, WxLabel(e.MediaIdLabel()));
     table_->SetItem(item, kColTitle, WxLabel(e.name));
     table_->SetItem(item, kColLocation, WxLabel(e.LocationLabel()));
     table_->SetItem(item, kColLastPlayed,
@@ -457,7 +456,7 @@ void WxLibraryView::ShowContext(wxListCtrl* view, const wxPoint& pos) {
   menu.Append(kIdMenuConfig, "Game Config...");
   menu.Append(kIdMenuPatches, "Patches...");
   const auto& entry = entries_[menu_index_];
-  if (!entry.compat_url.empty()) {
+  if (!entry.compat.url.empty()) {
     menu.Append(kIdMenuCompatReport, "View Compatibility Report...");
   } else if (!entry.title_id.empty()) {
     menu.Append(kIdMenuCompatSearch, "Search Compatibility Issues...");
@@ -638,7 +637,7 @@ constexpr char kArtCacheVersion = '3';
 
 bool ArtCacheCurrent(const std::filesystem::path& storage_root) {
   FILE* f = xe::filesystem::OpenFile(
-      storage_root / "artwork" / ".cache-version", "rb");
+      LibraryRoot(storage_root) / ".cache-version", "rb");
   if (!f) {
     return false;
   }
@@ -648,7 +647,7 @@ bool ArtCacheCurrent(const std::filesystem::path& storage_root) {
 }
 
 void StampArtCache(const std::filesystem::path& storage_root) {
-  auto marker = storage_root / "artwork" / ".cache-version";
+  auto marker = LibraryRoot(storage_root) / ".cache-version";
   std::error_code ec = {};
   std::filesystem::create_directories(marker.parent_path(), ec);
   FILE* f = xe::filesystem::OpenFile(marker, "wb");
@@ -706,10 +705,16 @@ bool ImportGamePaths(wxWindow* parent,
     }
     std::string name =
         meta.name.empty() ? xe::path_to_utf8(path.stem()) : meta.name;
-    MergeScannedGame(entries, path, meta.title_id, meta.media_id, name);
+    if (MergeScannedGame(entries, path, meta.title_id, meta.media_id,
+                         meta.version, name)) {
+      // Persist just the touched title; other titles are untouched.
+      if (const GameEntry* touched = FindEntry(entries, meta.title_id)) {
+        WriteEntry(storage_root, *touched);
+      }
+      changed = true;
+    }
     EnsureArtwork(storage_root, path, meta.type, meta.icon_bytes,
                   meta.title_id);
-    changed = true;
   }
   if (refresh_art && completed) {
     StampArtCache(storage_root);

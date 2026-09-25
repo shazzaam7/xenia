@@ -72,6 +72,16 @@ constexpr size_t kMaxImageBytes = 512ull * 1024 * 1024;
 
 std::string ToHex8(uint32_t value) { return fmt::format("{:08X}", value); }
 
+// "major.minor.build.qfe" from a packed XEX version value, the form used
+// for release folder names and for showing a version to the user.
+std::string FormatXexVersion(uint32_t value) {
+  xex2_version version{value};
+  // Bit-fields cannot bind to fmt's forwarding references; copy out first.
+  const uint32_t major = version.major, minor = version.minor,
+                 build = version.build, qfe = version.qfe;
+  return fmt::format("{}.{}.{}.{}", major, minor, build, qfe);
+}
+
 bool HasPngOrJpegMagic(const uint8_t* data, size_t size) {
   if (size < 4) {
     return false;
@@ -167,6 +177,8 @@ void FillMetaFromStfsHeader(const kernel::xam::XContentContainerHeader* header,
   const auto& md = header->content_metadata;
   meta.title_id = ToHex8(static_cast<uint32_t>(md.execution_info.title_id));
   meta.media_id = ToHex8(static_cast<uint32_t>(md.execution_info.media_id));
+  meta.version =
+      FormatXexVersion(static_cast<uint32_t>(md.execution_info.version_value));
   meta.disc_number =
       md.execution_info.disc_number ? int(md.execution_info.disc_number) : 1;
   meta.disc_count =
@@ -560,6 +572,8 @@ bool ReadXexMeta(const uint8_t* data, size_t size, GameMeta& meta_out) {
   meta_out.type = GameFileType::kXex;
   meta_out.title_id = ToHex8(static_cast<uint32_t>(exec->title_id));
   meta_out.media_id = ToHex8(static_cast<uint32_t>(exec->media_id));
+  meta_out.version =
+      FormatXexVersion(static_cast<uint32_t>(exec->version_value));
   meta_out.disc_number = exec->disc_number ? int(exec->disc_number) : 1;
   meta_out.disc_count = exec->disc_count ? int(exec->disc_count) : 1;
   if (meta_out.title_id == "00000000") {
@@ -1183,6 +1197,7 @@ bool FillMetaFromXexBytes(const std::vector<uint8_t>& xex_bytes,
   // the disc's parent folder - which is some other game entirely).
   meta.title_id = m.title_id;
   meta.media_id = m.media_id;
+  meta.version = m.version;
   meta.disc_number = m.disc_number;
   meta.disc_count = m.disc_count;
   std::vector<uint8_t> spa;
