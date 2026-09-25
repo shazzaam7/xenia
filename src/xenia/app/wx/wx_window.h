@@ -167,7 +167,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   friend class WxHostFrame;
   friend class WxDropTarget;
 
-  void SaveLibraryEntries();
+  // Persists one in-memory entry to its title folder. No-op for a bad
+  // index or before AttachLibrary.
+  void SaveLibraryEntry(size_t index);
 
   // Shared close path for the frame close event.
   void CloseWindowNow();
@@ -239,7 +241,8 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   std::vector<GameEntry> library_entries_;
   // Compatibility ratings keyed by title ID, plus the in-flight fetch guard.
   // The fetched map is transport only: ratings persist on the library
-  // entries themselves (library.toml) via ApplyCompatMap/FillMissingCompat.
+  // entries themselves (per-title info.toml) via
+  // ApplyCompatMap/FillMissingCompat.
   CompatMap compat_;
   bool compat_fetching_ = false;
   // Writes a freshly fetched map into all entries (clearing ratings for
