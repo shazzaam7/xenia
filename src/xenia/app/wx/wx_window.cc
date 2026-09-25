@@ -44,6 +44,7 @@
 #include "xenia/app/wx/wx_patch_dialog.h"
 #include "xenia/app/wx/wx_patch_update.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xam/profile_manager.h"
@@ -52,6 +53,8 @@
 #if defined(__WXMSW__)
 #include <Dbt.h>
 #endif
+
+DECLARE_string(ui_theme);
 
 namespace xe {
 namespace app {
@@ -554,6 +557,11 @@ void WxWindow::OnWxDpiChanged(const wxSize& new_dpi) {
   WindowDestructionReceiver destruction_receiver(this);
   ui::UISetupEvent e(this);
   OnDpiChanged(e, destruction_receiver);
+  // Re-scale the library for the new monitor DPI; the render surface side
+  // is handled through the ui::Window DPI machinery above.
+  if (library_view_ && !destruction_receiver.IsWindowDestroyedOrClosed()) {
+    library_view_->RefreshDpi();
+  }
 }
 
 void WxWindow::OnWxCursorTimer() {
@@ -739,7 +747,7 @@ void WxWindow::AttachLibrary(
   // window size) to fit, clamped to the display work area. Never shrinks a
   // larger window.
   wxSize size = library_view_->GetBestSize();
-  size.IncTo(wxSize(960, 540));
+  size.IncTo(frame_->FromDIP(wxSize(960, 540)));
   wxDisplay display(wxDisplay::GetFromWindow(frame_));
   if (display.IsOk()) {
     const wxRect work = display.GetClientArea();
@@ -970,13 +978,13 @@ void WxWindow::RemoveLibraryEntry(size_t index) {
             &dialog, wxID_ANY,
             WxLabel("Remove \"" + entry.name +
                     "\" from the library?\nGame files on disk are kept.")),
-        0, wxALL, 10);
+        0, wxALL, dialog.FromDIP(10));
     wxCheckBox* check = nullptr;
     if (!content_targets.empty()) {
       check = new wxCheckBox(
           &dialog, wxID_ANY,
           WxLabel("Also delete the game files from the content folder"));
-      sizer->Add(check, 0, wxLEFT | wxRIGHT | wxBOTTOM, 10);
+      sizer->Add(check, 0, wxLEFT | wxRIGHT | wxBOTTOM, dialog.FromDIP(10));
     }
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer(1);
@@ -985,9 +993,9 @@ void WxWindow::RemoveLibraryEntry(size_t index) {
     // modal loop.
     auto* remove_button = new wxButton(&dialog, wxID_OK, WxLabel("&Remove"));
     remove_button->SetDefault();
-    buttons->Add(remove_button, 0, wxRIGHT, 5);
+    buttons->Add(remove_button, 0, wxRIGHT, dialog.FromDIP(5));
     buttons->Add(new wxButton(&dialog, wxID_CANCEL), 0);
-    sizer->Add(buttons, 0, wxEXPAND | wxALL, 10);
+    sizer->Add(buttons, 0, wxEXPAND | wxALL, dialog.FromDIP(10));
     dialog.SetSizerAndFit(sizer);
     if (dialog.ShowModal() != wxID_OK) {
       return;
@@ -1155,6 +1163,39 @@ void WxWindow::UpdateGamePatches() {
     return;
   }
   ShowPatchUpdateDialog(library_view_, library_storage_root_ / "patches");
+}
+
+wxApp::AppearanceResult ApplyUiTheme() {
+  if (!wxTheApp) {
+    return wxApp::AppearanceResult::Failure;
+  }
+  const std::string theme = cvars::ui_theme;
+  wxApp::Appearance appearance = wxApp::Appearance::System;
+  if (theme == "dark") {
+    appearance = wxApp::Appearance::Dark;
+  } else if (theme == "light") {
+    appearance = wxApp::Appearance::Light;
+  }
+#ifdef __WXMSW__
+  wxTheApp->MSWEnableDarkMode(theme == "dark"    ? wxApp::DarkMode_Always
+                              : theme == "light" ? wxApp::DarkMode_Never
+                                                 : wxApp::DarkMode_Auto);
+#endif
+  return wxTheApp->SetAppearance(appearance);
+}
+
+bool WxWindow::RefreshTheme() {
+  const bool live = ApplyUiTheme() == wxApp::AppearanceResult::Ok;
+  // Rebuild theme-baked bitmaps and relayout regardless; a failed switch
+  // leaves everything as-is and the caller reports restart-needed.
+  if (live && library_view_) {
+    library_view_->RefreshDpi();
+  }
+  if (live && frame_) {
+    frame_->Layout();
+    frame_->Refresh();
+  }
+  return live;
 }
 
 void WxWindow::OnShowInFolder(size_t index) {

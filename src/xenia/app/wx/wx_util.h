@@ -4,13 +4,26 @@
 #include <filesystem>
 #include <string>
 
+#include <wx/colour.h>
 #include <wx/string.h>
+#include <wx/window.h>
 
 #include "xenia/base/filesystem.h"
 
 namespace xe {
 namespace app {
 namespace wx_ui {
+
+// Scales raw pixels to the monitor a window is on. Thin named wrapper over
+// wxWindow::FromDIP so size-defining call sites read in DIPs. All fixed
+// widget/icon/column/dialog sizes must go through this (or FromDIP
+// directly); sizer code otherwise stays in 96-DPI pixels forever.
+inline int DipPx(wxWindow* window, int px) {
+  return window ? window->FromDIP(px) : px;
+}
+inline wxSize DipSize(wxWindow* window, int w, int h) {
+  return wxSize(DipPx(window, w), DipPx(window, h));
+}
 
 // Menu/file dialog labels. Note: hotkey suffixes are intentionally not
 // appended with \t - wxWidgets would turn those into real accelerators that
@@ -23,6 +36,18 @@ inline wxString WxLabel(const std::string& text) {
 inline std::filesystem::path WxToPath(const wxString& string) {
   return xe::to_path(
       std::u16string_view(reinterpret_cast<const char16_t*>(string.wc_str())));
+}
+
+// True when the OS window background is dark (i.e. a dark theme is active).
+// Used for theme-dependent custom colors; system colors need no check.
+inline bool IsDarkTheme() {
+  const wxColour bg = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+  return (0.299 * bg.Red() + 0.587 * bg.Green() + 0.114 * bg.Blue()) < 128.0;
+}
+
+// Validation-error field background: readable on both light and dark themes.
+inline wxColour ErrorBgColour() {
+  return IsDarkTheme() ? wxColour(0x66, 0x1A, 0x1A) : wxColour(255, 180, 180);
 }
 
 }  // namespace wx_ui
