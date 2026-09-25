@@ -314,6 +314,30 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
   return have_icon;
 }
 
+bool SaveIconFile(const std::vector<uint8_t>& bytes,
+                  const std::filesystem::path& dest) {
+  if (!Decodes(bytes)) {
+    return false;
+  }
+  return SaveIconPng(bytes, dest);
+}
+
+bool SaveBackgroundFile(const std::vector<uint8_t>& bytes,
+                        const std::filesystem::path& dest) {
+  if (!Decodes(bytes)) {
+    return false;
+  }
+  std::error_code ec = {};
+  std::filesystem::create_directories(dest.parent_path(), ec);
+  FILE* f = xe::filesystem::OpenFile(dest, "wb");
+  if (!f) {
+    return false;
+  }
+  size_t n = std::fwrite(bytes.data(), 1, bytes.size(), f);
+  std::fclose(f);
+  return n == bytes.size();
+}
+
 }  // namespace wx_ui
 }  // namespace app
 }  // namespace xe
