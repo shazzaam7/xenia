@@ -60,6 +60,10 @@ class WxLibraryView : public wxPanel {
 
   void SetEntries(std::vector<GameEntry> entries);
   const std::vector<GameEntry>& entries() const { return entries_; }
+  // Re-scales icons, balls, and columns for the current monitor DPI and
+  // repopulates. Called on DPI changes; image lists are recreated because
+  // they cannot resize in place.
+  void RefreshDpi();
 
  private:
   enum : int {
@@ -75,6 +79,8 @@ class WxLibraryView : public wxPanel {
   void RebuildIcons();
   void Populate();
   void ApplySort();
+  void ApplyDpi();
+  void ApplyColumnWidths();
   void IconFor(const GameEntry& entry, int* small_out, int* big_out);
   CompatRating EntryRating(size_t index) const;
   std::string LastPlayedLabel(std::time_t t) const;
@@ -89,6 +95,7 @@ class WxLibraryView : public wxPanel {
   void OnSortColumn(wxListEvent& event);
   void OnHoverTable(wxMouseEvent& event);
   void OnHoverGrid(wxMouseEvent& event);
+  void OnSysColourChanged(wxSysColourChangedEvent& event);
   void OnActivate(wxListEvent& event);
   void OnContextTable(wxListEvent& event);
   void OnContextGrid(wxListEvent& event);
@@ -115,6 +122,13 @@ class WxLibraryView : public wxPanel {
   wxStaticText* empty_hint_ = nullptr;
   wxImageList* small_images_ = nullptr;
   wxImageList* big_images_ = nullptr;
+  // Icon/badge sizes in physical pixels for the current monitor DPI,
+  // refreshed by RefreshDpi (image lists are fixed-size and recreated).
+  int small_icon_px_ = 32;
+  int big_icon_px_ = 128;
+  int status_ball_px_ = 16;
+  int grid_ball_px_ = 24;
+  int grid_inset_px_ = 6;
   // entry index -> image list position (small_images_).
   std::vector<int> icon_index_;
   // entry index -> image list position (big_images_, grid view). Tracked

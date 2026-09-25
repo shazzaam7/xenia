@@ -32,6 +32,7 @@
 // startup cost; see AddDeferredPage / EnsurePageBuilt.
 
 #include "xenia/app/wx/wx_config_editor_dialog.h"
+#include "xenia/app/wx/wx_util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -109,8 +110,8 @@ class WxConfigEditorDialog : public wxDialog {
     simple_check_->SetToolTip("Show only the commonly used settings.");
 
     auto* outer = new wxBoxSizer(wxVERTICAL);
-    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
-    outer->Add(book_, 1, wxEXPAND | wxALL, 8);
+    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
+    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
     save_button_ = new wxButton(this, wxID_SAVE, "Save");
     reset_button_ = new wxButton(this, wxID_ANY, "Reset to defaults");
     reset_button_->SetToolTip(
@@ -126,15 +127,16 @@ class WxConfigEditorDialog : public wxDialog {
     buttons->Add(reset_button_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxBOTTOM,
                  8);
     buttons->Add(save_button_, 0,
-                 wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, 8);
+                 wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM,
+                 FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
     // Wider than the old notebook cap: the tree sidebar takes ~150px next to
     // the same 600px content column.
-    size.x = std::min(size.x, 800);
-    size.y = std::min(size.y, 640);
+    size.x = std::min(size.x, FromDIP(800));
+    size.y = std::min(size.y, FromDIP(640));
     SetSize(size);
 
     save_button_->Bind(wxEVT_BUTTON, &WxConfigEditorDialog::OnSave, this);
@@ -181,7 +183,7 @@ class WxConfigEditorDialog : public wxDialog {
     auto* row = new wxBoxSizer(wxHORIZONTAL);
     auto* label = new wxStaticText(
         scrolled, wxID_ANY, WxLabel(display_name ? display_name : var->name()));
-    label->SetMinSize(wxSize(kConfigNamePx, -1));
+    label->SetMinSize(wxSize(FromDIP(kConfigNamePx), -1));
     // When a friendly name replaces the key, keep the key discoverable - it's
     // what's actually written to the config file. Search results mix sections,
     // so they also name the section.
@@ -194,7 +196,7 @@ class WxConfigEditorDialog : public wxDialog {
       tooltip += "\n\n(config key: " + var->name() + ")";
     }
     label->SetToolTip(WxLabel(tooltip));
-    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
 
     // Rebuilds keep unsaved edits by seeding controls from the collected
     // values instead of the config file.
@@ -214,7 +216,7 @@ class WxConfigEditorDialog : public wxDialog {
     } else {
       rows_.push_back(entry);
     }
-    col->Add(row, 0, wxEXPAND | wxALL, 2);
+    col->Add(row, 0, wxEXPAND | wxALL, FromDIP(2));
   }
 
   // A page whose rows have not been created yet. The page window and its
@@ -235,12 +237,13 @@ class WxConfigEditorDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     // A page with no sizer has no best size of its own, so an unbuilt page
     // would let the book shrink to the first page built. Padding every page to
     // the content cap keeps the dialog's size independent of the build order.
-    page->SetMinSize(wxSize(kConfigPageContentWidth + 2 * kConfigPageBorder,
-                            kConfigPageContentHeight + 2 * kConfigPageBorder));
+    page->SetMinSize(
+        FromDIP(wxSize(kConfigPageContentWidth + 2 * kConfigPageBorder,
+                       kConfigPageContentHeight + 2 * kConfigPageBorder)));
 
     const auto dot = category.find('.');
     const std::string parent =
@@ -344,7 +347,7 @@ class WxConfigEditorDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* col = new wxBoxSizer(wxVERTICAL);
     size_t matches = 0;
     for (auto* var : vars_) {
@@ -358,7 +361,7 @@ class WxConfigEditorDialog : public wxDialog {
     if (!matches) {
       col->Add(new wxStaticText(scrolled, wxID_ANY,
                                 "No settings match this search."),
-               0, wxALL, 8);
+               0, wxALL, FromDIP(8));
     }
     FinishConfigPage(scrolled, col);
     book_->AddPage(page,
@@ -443,7 +446,7 @@ class WxConfigEditorDialog : public wxDialog {
           TrimConfigText(row.text->GetValue().ToStdString());
       if (!cvar::IsValidConfigValueText(row.var->value_kind(), text)) {
         invalid.push_back(row.var->category() + "." + row.var->name());
-        row.text->SetBackgroundColour(*wxRED);
+        row.text->SetBackgroundColour(ErrorBgColour());
       } else {
         staged.emplace_back(&row, text);
         row.text->SetBackgroundColour(wxNullColour);

@@ -64,7 +64,7 @@ std::string StatusText(const Emulator::ContentInstallEntry& entry) {
   return result;
 }
 
-wxBitmap IconBitmap(const std::vector<uint8_t>& bytes) {
+wxBitmap IconBitmap(const std::vector<uint8_t>& bytes, int px) {
   if (bytes.empty()) {
     return wxNullBitmap;
   }
@@ -73,9 +73,9 @@ wxBitmap IconBitmap(const std::vector<uint8_t>& bytes) {
   if (!image.IsOk()) {
     return wxNullBitmap;
   }
-  if (image.GetWidth() > kIconPx || image.GetHeight() > kIconPx) {
-    const double scale = std::min(double(kIconPx) / image.GetWidth(),
-                                  double(kIconPx) / image.GetHeight());
+  if (image.GetWidth() > px || image.GetHeight() > px) {
+    const double scale =
+        std::min(double(px) / image.GetWidth(), double(px) / image.GetHeight());
     image.Rescale(int(image.GetWidth() * scale), int(image.GetHeight() * scale),
                   wxIMAGE_QUALITY_HIGH);
   }
@@ -84,8 +84,8 @@ wxBitmap IconBitmap(const std::vector<uint8_t>& bytes) {
 
 // Backup for packages without a decodable thumbnail: theme-colored tile with
 // a "?" so the row keeps its layout instead of collapsing to blank space.
-wxBitmap PlaceholderBitmap() {
-  wxBitmap bitmap(kIconPx, kIconPx);
+wxBitmap PlaceholderBitmap(int px) {
+  wxBitmap bitmap(px, px);
   wxMemoryDC dc(bitmap);
   dc.SetBackground(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
   dc.Clear();
@@ -94,7 +94,7 @@ wxBitmap PlaceholderBitmap() {
   font.MakeBold();
   dc.SetFont(font);
   dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
-  dc.DrawLabel("?", wxRect(0, 0, kIconPx, kIconPx),
+  dc.DrawLabel("?", wxRect(0, 0, px, px),
                wxALIGN_CENTER_HORIZONTAL | wxALIGN_CENTER_VERTICAL);
   dc.SelectObject(wxNullBitmap);
   return bitmap;
@@ -115,34 +115,36 @@ class WxContentInstallDialog : public wxDialog {
     auto* outer = new wxBoxSizer(wxVERTICAL);
     auto* scrolled = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL | wxHSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* rows = new wxBoxSizer(wxVERTICAL);
     for (size_t i = 0; i < entries_->size(); i++) {
       if (i > 0) {
         rows->Add(new wxStaticLine(scrolled), 0, wxEXPAND | wxTOP | wxBOTTOM,
-                  6);
+                  FromDIP(6));
       }
       RowWidgets widgets;
       rows->Add(BuildRow(scrolled, (*entries_)[i], widgets), 0, wxEXPAND);
       row_widgets_.push_back(widgets);
     }
     scrolled->SetSizer(rows);
-    outer->Add(scrolled, 1, wxEXPAND | wxALL, 8);
+    outer->Add(scrolled, 1, wxEXPAND | wxALL, FromDIP(8));
     close_button_ = new wxButton(this, wxID_CLOSE, "Close");
     close_button_->Disable();
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    buttons->Add(close_button_, 0, wxRIGHT | wxBOTTOM, 8);
+    buttons->Add(close_button_, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
     outer->Add(buttons, 0, wxEXPAND);
     SetSizer(outer);
     // wxScrolledWindow reports a tiny best size on its own, so size it from
     // the content instead. Width is capped since the unwrapped path link can
     // be arbitrarily long (horizontal scroll covers the rest).
     const wxSize content = rows->CalcMin();
-    const int width =
-        content.GetWidth() + wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) + 32;
+    const int width = content.GetWidth() +
+                      wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) +
+                      FromDIP(32);
     scrolled->SetMinSize(
-        wxSize(std::min(width, 720), std::min(content.GetHeight() + 16, 600)));
+        wxSize(std::min(width, FromDIP(720)),
+               std::min(content.GetHeight() + FromDIP(16), FromDIP(600))));
     Fit();
 
     Bind(wxEVT_BUTTON, &WxContentInstallDialog::OnCloseButton, this,
@@ -164,18 +166,18 @@ class WxContentInstallDialog : public wxDialog {
                     const Emulator::ContentInstallEntry& entry,
                     RowWidgets& out) {
     auto* row = new wxBoxSizer(wxHORIZONTAL);
-    wxBitmap icon_art = IconBitmap(entry.icon_bytes_);
+    wxBitmap icon_art = IconBitmap(entry.icon_bytes_, FromDIP(kIconPx));
     if (!icon_art.IsOk()) {
-      icon_art = PlaceholderBitmap();
+      icon_art = PlaceholderBitmap(FromDIP(kIconPx));
     }
     auto* icon = new wxStaticBitmap(parent, wxID_ANY, icon_art);
-    icon->SetMinSize(wxSize(kIconPx, kIconPx));
-    row->Add(icon, 0, wxRIGHT, 8);
+    icon->SetMinSize(FromDIP(wxSize(kIconPx, kIconPx)));
+    row->Add(icon, 0, wxRIGHT, FromDIP(8));
 
     auto* col = new wxBoxSizer(wxVERTICAL);
     auto* name =
         new wxStaticText(parent, wxID_ANY, WxLabel("Name: " + entry.name_));
-    name->Wrap(460);
+    name->Wrap(FromDIP(460));
     col->Add(name, 0, wxEXPAND);
     std::string install_path =
         xe::path_to_utf8(content_root_ / entry.data_installation_path_);
@@ -195,9 +197,9 @@ class WxContentInstallDialog : public wxDialog {
     auto* status =
         new wxStaticText(parent, wxID_ANY, WxLabel(StatusText(entry)));
     col->Add(status, 0, wxEXPAND);
-    auto* gauge =
-        new wxGauge(parent, wxID_ANY, 1000, wxDefaultPosition, wxSize(460, -1));
-    col->Add(gauge, 0, wxEXPAND | wxTOP, 4);
+    auto* gauge = new wxGauge(parent, wxID_ANY, 1000, wxDefaultPosition,
+                              FromDIP(wxSize(460, -1)));
+    col->Add(gauge, 0, wxEXPAND | wxTOP, FromDIP(4));
     row->Add(col, 1, wxEXPAND);
     out.status = status;
     out.gauge = gauge;

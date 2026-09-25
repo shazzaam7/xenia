@@ -90,15 +90,15 @@ wxChoice* AddChoiceRow(wxWindow* parent, wxSizer* column, const char* label,
                        const char* const* items, size_t count, int selection) {
   auto* row = new wxBoxSizer(wxHORIZONTAL);
   auto* text = new wxStaticText(parent, wxID_ANY, WxLabel(label));
-  text->SetMinSize(wxSize(kLabelPx, -1));
-  row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+  text->SetMinSize(wxSize(parent->FromDIP(kLabelPx), -1));
+  row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, parent->FromDIP(8));
   auto* choice = new wxChoice(parent, wxID_ANY);
   for (size_t i = 0; i < count; i++) {
     choice->Append(WxLabel(items[i] ? items[i] : ""));
   }
   choice->SetSelection(std::clamp(selection, 0, int(count) - 1));
   row->Add(choice, 1, wxEXPAND);
-  column->Add(row, 0, wxEXPAND | wxTOP, 4);
+  column->Add(row, 0, wxEXPAND | wxTOP, parent->FromDIP(4));
   return choice;
 }
 
@@ -107,7 +107,7 @@ void AddSectionLabel(wxWindow* parent, wxSizer* column, const char* label) {
   wxFont font = text->GetFont();
   font.MakeBold();
   text->SetFont(font);
-  column->Add(text, 0, wxTOP, 8);
+  column->Add(text, 0, wxTOP, parent->FromDIP(8));
 }
 
 class WxGamercardDialog : public wxDialog {
@@ -123,8 +123,8 @@ class WxGamercardDialog : public wxDialog {
     Build();
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 820);
-    size.y = std::min(size.y, 700);
+    size.x = std::min(size.x, FromDIP(820));
+    size.y = std::min(size.y, FromDIP(700));
     SetSize(size);
   }
 
@@ -185,7 +185,7 @@ class WxGamercardDialog : public wxDialog {
     auto* outer = new wxBoxSizer(wxVERTICAL);
     auto* scrolled = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* columns = new wxBoxSizer(wxHORIZONTAL);
 
     // Left: profile + online settings (mirrors the ImGui table's first
@@ -198,16 +198,16 @@ class WxGamercardDialog : public wxDialog {
     auto* tag_row = new wxBoxSizer(wxHORIZONTAL);
     auto* tag_label =
         new wxStaticText(base->GetStaticBox(), wxID_ANY, "Gamertag:");
-    tag_label->SetMinSize(wxSize(kLabelPx, -1));
-    tag_row->Add(tag_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    tag_label->SetMinSize(wxSize(FromDIP(kLabelPx), -1));
+    tag_row->Add(tag_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     tag_row->Add(gamertag_, 1, wxEXPAND);
-    base->Add(tag_row, 0, wxEXPAND | wxTOP, 4);
+    base->Add(tag_row, 0, wxEXPAND | wxTOP, FromDIP(4));
     gamertag_->Bind(wxEVT_TEXT, &WxGamercardDialog::OnGamertag, this);
 
-    icon_button_ =
-        new wxBitmapButton(base->GetStaticBox(), wxID_ANY,
-                           BitmapFromBytes(values_.profile_icon, kIconPx),
-                           wxDefaultPosition, wxSize(kIconPx + 8, kIconPx + 8));
+    icon_button_ = new wxBitmapButton(
+        base->GetStaticBox(), wxID_ANY,
+        BitmapFromBytes(values_.profile_icon, FromDIP(kIconPx)),
+        wxDefaultPosition, FromDIP(wxSize(kIconPx + 8, kIconPx + 8)));
     const bool title_open = kernel_state_->title_id() != 0;
     icon_button_->Enable(is_signed_in_ && !title_open);
     icon_button_->SetToolTip(
@@ -215,21 +215,21 @@ class WxGamercardDialog : public wxDialog {
                    : "Provide a PNG image with a resolution of 64x64 or "
                      "32x32. Icon will refresh after relog.");
     icon_button_->Bind(wxEVT_BUTTON, &WxGamercardDialog::OnPickIcon, this);
-    base->Add(icon_button_, 0, wxTOP, 4);
+    base->Add(icon_button_, 0, wxTOP, FromDIP(4));
 
     auto add_readonly = [&](const char* label, const std::string& value,
                             bool multiline = false) {
       auto* row = new wxBoxSizer(wxHORIZONTAL);
       auto* text =
           new wxStaticText(base->GetStaticBox(), wxID_ANY, WxLabel(label));
-      text->SetMinSize(wxSize(kLabelPx, -1));
-      row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+      text->SetMinSize(wxSize(FromDIP(kLabelPx), -1));
+      row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
       row->Add(new wxTextCtrl(
                    base->GetStaticBox(), wxID_ANY, WxLabel(value),
                    wxDefaultPosition, wxDefaultSize,
                    multiline ? wxTE_MULTILINE | wxTE_READONLY : wxTE_READONLY),
                1, wxEXPAND);
-      base->Add(row, 0, wxEXPAND | wxTOP, 4);
+      base->Add(row, 0, wxEXPAND | wxTOP, FromDIP(4));
     };
     if (is_signed_in_) {
       add_readonly("Gamer Name:", std::string(values_.gamer_name));
@@ -245,7 +245,7 @@ class WxGamercardDialog : public wxDialog {
                             "Country:", kernel::xam::ui::XOnlineCountry,
                             std::size(kernel::xam::ui::XOnlineCountry),
                             static_cast<int>(values_.country));
-    left->Add(base, 0, wxEXPAND | wxALL, 4);
+    left->Add(base, 0, wxEXPAND | wxALL, FromDIP(4));
 
     auto* online =
         new wxStaticBoxSizer(wxVERTICAL, scrolled, "Online Profile Settings");
@@ -253,18 +253,18 @@ class WxGamercardDialog : public wxDialog {
                            wxDefaultPosition, wxDefaultSize);
     live_->SetValue(values_.is_live_enabled);
     live_->Bind(wxEVT_CHECKBOX, &WxGamercardDialog::OnLive, this);
-    online->Add(live_, 0, wxTOP, 4);
+    online->Add(live_, 0, wxTOP, FromDIP(4));
     auto add_online_readonly = [&](const char* label,
                                    const std::string& value) {
       auto* row = new wxBoxSizer(wxHORIZONTAL);
       auto* text =
           new wxStaticText(online->GetStaticBox(), wxID_ANY, WxLabel(label));
-      text->SetMinSize(wxSize(kLabelPx, -1));
-      row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+      text->SetMinSize(wxSize(FromDIP(kLabelPx), -1));
+      row->Add(text, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
       row->Add(new wxTextCtrl(online->GetStaticBox(), wxID_ANY, WxLabel(value),
                               wxDefaultPosition, wxDefaultSize, wxTE_READONLY),
                1, wxEXPAND);
-      online->Add(row, 0, wxEXPAND | wxTOP, 4);
+      online->Add(row, 0, wxEXPAND | wxTOP, FromDIP(4));
     };
     add_online_readonly("Online XUID:", std::string(values_.online_xuid));
     add_online_readonly("Online Domain:", std::string(values_.online_domain));
@@ -280,7 +280,7 @@ class WxGamercardDialog : public wxDialog {
                      "Subscription Tier:", kernel::xam::ui::AccountSubscription,
                      std::size(kernel::xam::ui::AccountSubscription),
                      static_cast<int>(values_.account_subscription_tier));
-    left->Add(online, 0, wxEXPAND | wxALL, 4);
+    left->Add(online, 0, wxEXPAND | wxALL, FromDIP(4));
     columns->Add(left, 1, wxEXPAND);
 
     // Right: GPD settings.
@@ -348,18 +348,18 @@ class WxGamercardDialog : public wxDialog {
     AddGpdRow(gpd->GetStaticBox(), gpd, UserSettingId::XPROFILE_GAMER_TYPE,
               "Gamer Type:", kernel::xam::ui::GamerTypeOptions,
               std::size(kernel::xam::ui::GamerTypeOptions));
-    columns->Add(gpd, 1, wxEXPAND | wxALL, 4);
+    columns->Add(gpd, 1, wxEXPAND | wxALL, FromDIP(4));
 
     scrolled->SetSizer(columns);
-    outer->Add(scrolled, 1, wxEXPAND | wxALL, 8);
+    outer->Add(scrolled, 1, wxEXPAND | wxALL, FromDIP(8));
 
     save_button_ = new wxButton(this, wxID_SAVE, "Save");
     auto* cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    buttons->Add(save_button_, 0, wxRIGHT, 8);
-    buttons->Add(cancel_button, 0, wxRIGHT, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, 8);
+    buttons->Add(save_button_, 0, wxRIGHT, FromDIP(8));
+    buttons->Add(cancel_button, 0, wxRIGHT, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
     SetSizer(outer);
 
     save_button_->Bind(wxEVT_BUTTON, &WxGamercardDialog::OnSave, this);
@@ -369,10 +369,12 @@ class WxGamercardDialog : public wxDialog {
     // wxScrolledWindow reports a tiny best size on its own, so size it from
     // the content instead (same as the content install dialog).
     const wxSize content = columns->CalcMin();
-    const int width =
-        content.GetWidth() + wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) + 32;
+    const int width = content.GetWidth() +
+                      wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) +
+                      FromDIP(32);
     scrolled->SetMinSize(
-        wxSize(std::min(width, 820), std::min(content.GetHeight() + 16, 700)));
+        wxSize(std::min(width, FromDIP(820)),
+               std::min(content.GetHeight() + FromDIP(16), FromDIP(700))));
     Fit();
   }
 
@@ -401,7 +403,7 @@ class WxGamercardDialog : public wxDialog {
     const bool valid = kernel::xam::ProfileManager::IsGamertagValid(
         gamertag_->GetValue().ToStdString());
     gamertag_->SetBackgroundColour(valid ? default_gamertag_bg_
-                                         : wxColour(255, 180, 180));
+                                         : ErrorBgColour());
     gamertag_->Refresh();
     save_button_->Enable(valid);
     save_button_->SetToolTip(valid ? ""
@@ -429,7 +431,8 @@ class WxGamercardDialog : public wxDialog {
       return;
     }
     values_.profile_icon = ReadPngFromFile(path);
-    icon_button_->SetBitmap(BitmapFromBytes(values_.profile_icon, kIconPx));
+    icon_button_->SetBitmap(
+        BitmapFromBytes(values_.profile_icon, FromDIP(kIconPx)));
   }
 
   void OnSave(wxCommandEvent&) {
@@ -554,13 +557,13 @@ class WxCreateProfileDialog : public wxDialog {
     auto* outer = new wxBoxSizer(wxVERTICAL);
     auto* row = new wxBoxSizer(wxHORIZONTAL);
     auto* label = new wxStaticText(this, wxID_ANY, "Gamertag:");
-    label->SetMinSize(wxSize(kLabelPx, -1));
-    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    label->SetMinSize(wxSize(FromDIP(kLabelPx), -1));
+    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     gamertag_ = new wxTextCtrl(this, wxID_ANY);
     gamertag_->SetMaxLength(15);
     gamertag_->SetFocus();
     row->Add(gamertag_, 1, wxEXPAND);
-    outer->Add(row, 0, wxEXPAND | wxALL, 8);
+    outer->Add(row, 0, wxEXPAND | wxALL, FromDIP(8));
     gamertag_->Bind(wxEVT_TEXT, &WxCreateProfileDialog::OnGamertag, this);
 
     create_button_ = new wxButton(
@@ -570,9 +573,9 @@ class WxCreateProfileDialog : public wxDialog {
     auto* cancel_button = new wxButton(this, wxID_CANCEL, "Cancel");
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    buttons->Add(create_button_, 0, wxRIGHT, 8);
-    buttons->Add(cancel_button, 0, wxRIGHT, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, 8);
+    buttons->Add(create_button_, 0, wxRIGHT, FromDIP(8));
+    buttons->Add(cancel_button, 0, wxRIGHT, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
     SetSizerAndFit(outer);
     create_button_->Bind(wxEVT_BUTTON, &WxCreateProfileDialog::OnCreate, this);
     UpdateGamertag();
@@ -582,8 +585,7 @@ class WxCreateProfileDialog : public wxDialog {
   void UpdateGamertag() {
     const bool valid = kernel::xam::ProfileManager::IsGamertagValid(
         gamertag_->GetValue().ToStdString());
-    gamertag_->SetBackgroundColour(valid ? wxNullColour
-                                         : wxColour(255, 180, 180));
+    gamertag_->SetBackgroundColour(valid ? wxNullColour : ErrorBgColour());
     gamertag_->Refresh();
     create_button_->Enable(valid);
   }
@@ -671,8 +673,8 @@ std::string PlayedLabel(const kernel::xam::TitleInfo& entry) {
 
 class WxPlayedTitlesDialog : public wxDialog {
  public:
-  static wxBitmap Placeholder() {
-    wxBitmap bitmap(kTitleIconPx, kTitleIconPx, 32);
+  static wxBitmap Placeholder(int px) {
+    wxBitmap bitmap(px, px, 32);
     wxMemoryDC dc(bitmap);
     dc.SetBackground(
         wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_BTNFACE)));
@@ -702,38 +704,39 @@ class WxPlayedTitlesDialog : public wxDialog {
       search_->Bind(wxEVT_TEXT, &WxPlayedTitlesDialog::OnSearch, this);
       search_->Bind(wxEVT_SEARCH_CANCEL, &WxPlayedTitlesDialog::OnSearchCancel,
                     this);
-      outer->Add(search_, 0, wxEXPAND | wxALL, 8);
+      outer->Add(search_, 0, wxEXPAND | wxALL, FromDIP(8));
     }
     if (info_.empty()) {
       auto* hint =
           new wxStaticText(this, wxID_ANY, "There are no titles, so far.",
                            wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
-      outer->Add(hint, 1, wxEXPAND | wxALL, 16);
+      outer->Add(hint, 1, wxEXPAND | wxALL, FromDIP(16));
     } else {
       list_ = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                              wxLC_REPORT | wxLC_SINGLE_SEL);
-      list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, kTitleIconPx + 6);
-      list_->InsertColumn(1, "Title", wxLIST_FORMAT_LEFT, 220);
-      list_->InsertColumn(2, "Achievements", wxLIST_FORMAT_LEFT, 220);
-      list_->InsertColumn(3, "Last played", wxLIST_FORMAT_LEFT, 140);
-      images_ = new wxImageList(kTitleIconPx, kTitleIconPx, true);
-      images_->Add(Placeholder());
+      list_->InsertColumn(0, "", wxLIST_FORMAT_LEFT, FromDIP(kTitleIconPx + 6));
+      list_->InsertColumn(1, "Title", wxLIST_FORMAT_LEFT, FromDIP(220));
+      list_->InsertColumn(2, "Achievements", wxLIST_FORMAT_LEFT, FromDIP(220));
+      list_->InsertColumn(3, "Last played", wxLIST_FORMAT_LEFT, FromDIP(140));
+      images_ =
+          new wxImageList(FromDIP(kTitleIconPx), FromDIP(kTitleIconPx), true);
+      images_->Add(Placeholder(FromDIP(kTitleIconPx)));
       list_->AssignImageList(images_, wxIMAGE_LIST_SMALL);
       list_->Bind(wxEVT_LIST_ITEM_RIGHT_CLICK, &WxPlayedTitlesDialog::OnContext,
                   this);
-      outer->Add(list_, 1, wxEXPAND | wxALL, 8);
+      outer->Add(list_, 1, wxEXPAND | wxALL, FromDIP(8));
       Populate();
     }
     auto* close_button = new wxButton(this, wxID_CLOSE, "Close");
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer();
-    buttons->Add(close_button, 0, wxRIGHT | wxBOTTOM, 8);
+    buttons->Add(close_button, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
     outer->Add(buttons, 0, wxEXPAND);
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 760);
-    size.y = std::min(size.y, 600);
+    size.x = std::min(size.x, FromDIP(760));
+    size.y = std::min(size.y, FromDIP(600));
     SetSize(size);
     close_button->Bind(
         wxEVT_BUTTON, [this](wxCommandEvent&) { Close(); }, wxID_CLOSE);
@@ -757,7 +760,7 @@ class WxPlayedTitlesDialog : public wxDialog {
   void Populate() {
     list_->DeleteAllItems();
     images_->RemoveAll();
-    images_->Add(Placeholder());
+    images_->Add(Placeholder(FromDIP(kTitleIconPx)));
     order_.clear();
     for (size_t i = 0; i < info_.size(); i++) {
       if (!Matches(info_[i])) {
@@ -783,8 +786,9 @@ class WxPlayedTitlesDialog : public wxDialog {
         wxMemoryInputStream stream(icon.data(), icon.size());
         wxImage image(stream, wxBITMAP_TYPE_ANY);
         if (image.IsOk()) {
-          index = images_->Add(wxBitmap(
-              image.Scale(kTitleIconPx, kTitleIconPx, wxIMAGE_QUALITY_HIGH)));
+          const int px = FromDIP(kTitleIconPx);
+          index =
+              images_->Add(wxBitmap(image.Scale(px, px, wxIMAGE_QUALITY_HIGH)));
         }
       }
       list_->SetItemImage(long(r), index);
@@ -923,15 +927,15 @@ bool ShowNoProfileDialog(WxWindow* window, kernel::KernelState* kernel_state,
                  &dialog, wxID_ANY,
                  "There is no profile available! You will not be able to save "
                  "without one.\n\nWould you like to create one?"),
-             0, wxALL, 8);
+             0, wxALL, dialog.FromDIP(8));
   auto* create_button = new wxButton(
       &dialog, wxID_ANY,
       migrate ? "Create profile && migrate data" : "Create Profile");
   auto* close_button = new wxButton(&dialog, wxID_CANCEL, "Close");
   auto* buttons = new wxBoxSizer(wxHORIZONTAL);
-  buttons->Add(create_button, 0, wxRIGHT, 8);
+  buttons->Add(create_button, 0, wxRIGHT, dialog.FromDIP(8));
   buttons->Add(close_button, 0);
-  outer->Add(buttons, 0, wxALIGN_RIGHT | wxALL, 8);
+  outer->Add(buttons, 0, wxALIGN_RIGHT | wxALL, dialog.FromDIP(8));
   dialog.SetSizerAndFit(outer);
   bool created = false;
   create_button->Bind(

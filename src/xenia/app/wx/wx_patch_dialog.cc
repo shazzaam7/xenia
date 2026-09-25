@@ -149,28 +149,28 @@ class WxPatchDialog : public wxDialog {
     search_->SetDescriptiveText("Search patches by name or description");
     search_->ShowCancelButton(true);
     search_->SetToolTip("Filter patches by name, description or author.");
-    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
     book_ = new wxTreebook(this, wxID_ANY);
-    outer->Add(book_, 1, wxEXPAND | wxALL, 8);
+    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
     BuildPages(nullptr);
 
     auto* footnote = new wxStaticText(
         this, wxID_ANY,
         "Patch changes apply the next time the title is launched.");
     footnote->Enable(false);
-    outer->Add(footnote, 0, wxLEFT | wxRIGHT | wxBOTTOM, 8);
+    outer->Add(footnote, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
 
     save_button_ = new wxButton(this, wxID_SAVE, "Save");
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer(1);
-    buttons->Add(save_button_, 0, wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, 8);
+    buttons->Add(save_button_, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 680);
-    size.y = std::min(size.y, 640);
+    size.x = std::min(size.x, FromDIP(680));
+    size.y = std::min(size.y, FromDIP(640));
     SetSize(size);
 
     save_button_->Bind(wxEVT_BUTTON, &WxPatchDialog::OnSave, this);
@@ -220,12 +220,14 @@ class WxPatchDialog : public wxDialog {
     const wxSize content = col->CalcMin();
     scrolled->SetMinSize(
         wxSize(std::min(content.GetWidth() +
-                            wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) + 16,
-                        560),
-               std::min(content.GetHeight() + 16, 470)));
+                            wxSystemSettings::GetMetric(wxSYS_VSCROLL_X) +
+                            scrolled->FromDIP(16),
+                        scrolled->FromDIP(560)),
+               std::min(content.GetHeight() + scrolled->FromDIP(16),
+                        scrolled->FromDIP(470))));
     auto* page = scrolled->GetParent();
     auto* page_sizer = new wxBoxSizer(wxVERTICAL);
-    page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, 4);
+    page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, scrolled->FromDIP(4));
     page->SetSizer(page_sizer);
     page->Layout();
     scrolled->Layout();
@@ -238,7 +240,7 @@ class WxPatchDialog : public wxDialog {
     auto* header = new wxStaticText(scrolled, wxID_ANY, WxLabel(filename));
     header->SetForegroundColour(
         wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));
-    col->Add(header, 0, wxEXPAND | wxALL, 4);
+    col->Add(header, 0, wxEXPAND | wxALL, scrolled->FromDIP(4));
   }
 
   void AddPatchRow(wxWindow* parent, wxBoxSizer* col, size_t f, size_t e,
@@ -257,10 +259,10 @@ class WxPatchDialog : public wxDialog {
       }
     }
     check->SetValue(enabled);
-    row_sizer->Add(check, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+    row_sizer->Add(check, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     auto* texts = new wxBoxSizer(wxVERTICAL);
     auto* name = new wxStaticText(parent, wxID_ANY, WxLabel(label));
-    name->SetMinSize(wxSize(kNamePx, -1));
+    name->SetMinSize(wxSize(FromDIP(kNamePx), -1));
     texts->Add(name, 0, wxEXPAND);
     if (!entry.patch_author.empty()) {
       auto* author =
@@ -275,7 +277,7 @@ class WxPatchDialog : public wxDialog {
       check->SetToolTip(tip);
       name->SetToolTip(tip);
     }
-    col->Add(row_sizer, 0, wxEXPAND | wxALL, 2);
+    col->Add(row_sizer, 0, wxEXPAND | wxALL, FromDIP(2));
     PatchRow row;
     row.file = f;
     row.entry = e;
@@ -297,14 +299,14 @@ class WxPatchDialog : public wxDialog {
       auto* page = new wxPanel(book_, wxID_ANY);
       auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                             wxDefaultSize, wxVSCROLL);
-      scrolled->SetScrollRate(0, 10);
+      scrolled->SetScrollRate(0, FromDIP(10));
       auto* col = new wxBoxSizer(wxVERTICAL);
       col->Add(new wxStaticText(scrolled, wxID_ANY,
                                 WxLabel("No patch files installed for this "
                                         "title.\n\nPlace *.patch.toml files in "
                                         "the patches folder:\n" +
                                         patches_dir_)),
-               0, wxALL, 8);
+               0, wxALL, FromDIP(8));
       FinishPage(scrolled, col);
       book_->AddPage(page, "No patches", true);
       return;
@@ -314,19 +316,19 @@ class WxPatchDialog : public wxDialog {
       auto* page = new wxPanel(book_, wxID_ANY);
       auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                             wxDefaultSize, wxVSCROLL);
-      scrolled->SetScrollRate(0, 10);
+      scrolled->SetScrollRate(0, FromDIP(10));
       auto* col = new wxBoxSizer(wxVERTICAL);
       AddFileHeader(scrolled, col, file.filename);
       if (file.parsed.title_id == static_cast<uint32_t>(-1)) {
         auto* broken = new wxStaticText(
             scrolled, wxID_ANY, "Could not parse this file - left untouched.");
         broken->Enable(false);
-        col->Add(broken, 0, wxALL, 4);
+        col->Add(broken, 0, wxALL, FromDIP(4));
       } else if (file.parsed.patch_info.empty()) {
         auto* empty = new wxStaticText(scrolled, wxID_ANY,
                                        "This file contains no patches.");
         empty->Enable(false);
-        col->Add(empty, 0, wxALL, 4);
+        col->Add(empty, 0, wxALL, FromDIP(4));
       }
       for (size_t e = 0; e < file.parsed.patch_info.size(); ++e) {
         AddPatchRow(scrolled, col, f, e, seeds);
@@ -342,7 +344,7 @@ class WxPatchDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* col = new wxBoxSizer(wxVERTICAL);
     size_t matches = 0;
     for (size_t f = 0; f < files_.size(); ++f) {
@@ -367,7 +369,7 @@ class WxPatchDialog : public wxDialog {
     if (!matches) {
       col->Add(
           new wxStaticText(scrolled, wxID_ANY, "No patches match this search."),
-          0, wxALL, 8);
+          0, wxALL, FromDIP(8));
     }
     FinishPage(scrolled, col);
     book_->AddPage(page,

@@ -369,19 +369,21 @@ class WxPatchUpdateDialog : public wxDialog {
  public:
   WxPatchUpdateDialog(wxWindow* parent,
                       const std::filesystem::path& patches_dir)
+      // NOTE: size through parent, not this: FromDIP on an unconstructed
+      // window dereferences unset internals and AVs (GetDPIHelper).
       : wxDialog(parent, wxID_ANY, "Update Game Patches", wxDefaultPosition,
-                 wxSize(420, 140), wxDEFAULT_DIALOG_STYLE),
+                 parent->FromDIP(wxSize(420, 140)), wxDEFAULT_DIALOG_STYLE),
         state_(std::make_shared<PatchUpdateProgress>()) {
     auto* outer = new wxBoxSizer(wxVERTICAL);
     status_ = new wxStaticText(this, wxID_ANY, "Fetching patch list...");
-    outer->Add(status_, 0, wxEXPAND | wxALL, 8);
+    outer->Add(status_, 0, wxEXPAND | wxALL, FromDIP(8));
     gauge_ = new wxGauge(this, wxID_ANY, 100);
-    outer->Add(gauge_, 0, wxEXPAND | wxLEFT | wxRIGHT, 8);
+    outer->Add(gauge_, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(8));
     auto* buttons = new wxBoxSizer(wxHORIZONTAL);
     buttons->AddStretchSpacer(1);
     cancel_ = new wxButton(this, wxID_CANCEL, "Cancel");
-    buttons->Add(cancel_, 0, wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxTOP, 8);
+    buttons->Add(cancel_, 0, wxRIGHT | wxBOTTOM, FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxTOP, FromDIP(8));
     SetSizer(outer);
 
     cancel_->Bind(wxEVT_BUTTON, &WxPatchUpdateDialog::OnCancel, this);

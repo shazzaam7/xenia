@@ -104,6 +104,9 @@ class EmulatorWindow {
 
   // Shows the profile popup (same menu as the library toolbar button).
   void ShowProfileMenu();
+  // Switches cvars::ui_theme (Display menu) and applies it live when the
+  // platform allows; otherwise the change takes effect on restart.
+  void SetUiTheme(const std::string& theme);
   // Shows the console settings dialog (wxWidgets in wx builds).
   void ShowConsoleSettingsDialog();
   // Shows the config.toml editor (wxWidgets only).
