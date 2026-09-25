@@ -7,9 +7,10 @@
  ******************************************************************************
  */
 
-// Per-title patch editor: one treebook page per installed patch file, each
-// with a checkbox per [[patch]] entry, plus a search box filtering entries
-// across files. Persisted by flipping is_enabled in place: the rewrite is
+// Per-title patch editor: a file combobox above the search box switches
+// between installed patch files, each showing a checkbox per [[patch]]
+// entry. Search filters entries across files. Persisted by flipping
+// is_enabled in place: the rewrite is
 // surgical (only the is_enabled lines change, everything else is
 // byte-preserved) and verified by re-parsing; the engine honors the flag
 // natively at apply time, so no engine change is needed and the files stay
@@ -27,6 +28,7 @@
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
+#include <wx/choice.h>
 #include <wx/dialog.h>
 #include <wx/msgdlg.h>
 #include <wx/scrolwin.h>
@@ -36,7 +38,6 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 #include <wx/timer.h>
-#include <wx/treebook.h>
 
 #include "xenia/app/wx/wx_util.h"
 #include "xenia/base/filesystem.h"
@@ -144,6 +145,13 @@ class WxPatchDialog : public wxDialog {
     search_timer_.SetOwner(this);
 
     auto* outer = new wxBoxSizer(wxVERTICAL);
+    auto* file_row = new wxBoxSizer(wxHORIZONTAL);
+    file_row->Add(new wxStaticText(this, wxID_ANY, "File:"), 0,
+                  wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
+    file_choice_ = new wxChoice(this, wxID_ANY);
+    file_choice_->Bind(wxEVT_CHOICE, &WxPatchDialog::OnSelectFile, this);
+    file_row->Add(file_choice_, 1, wxEXPAND);
+    outer->Add(file_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
     search_ = new wxSearchCtrl(this, wxID_ANY);
     search_->SetHint("Search patches");
     search_->SetDescriptiveText("Search patches by name or description");
@@ -151,9 +159,11 @@ class WxPatchDialog : public wxDialog {
     search_->SetToolTip("Filter patches by name, description or author.");
     outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
-    book_ = new wxTreebook(this, wxID_ANY);
-    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
-    BuildPages(nullptr);
+    page_ = new wxPanel(this, wxID_ANY);
+    content_sizer_ = new wxBoxSizer(wxVERTICAL);
+    page_->SetSizer(content_sizer_);
+    outer->Add(page_, 1, wxEXPAND | wxALL, FromDIP(8));
+    BuildContent(nullptr);
 
     auto* footnote = new wxStaticText(
         this, wxID_ANY,
@@ -214,7 +224,7 @@ class WxPatchDialog : public wxDialog {
     });
   }
 
-  // Sizes a book page to its content with a scroll fallback.
+  // Sizes the content view to its rows with a scroll fallback.
   static void FinishPage(wxScrolledWindow* scrolled, wxSizer* col) {
     scrolled->SetSizer(col);
     const wxSize content = col->CalcMin();
@@ -225,11 +235,6 @@ class WxPatchDialog : public wxDialog {
                         scrolled->FromDIP(560)),
                std::min(content.GetHeight() + scrolled->FromDIP(16),
                         scrolled->FromDIP(470))));
-    auto* page = scrolled->GetParent();
-    auto* page_sizer = new wxBoxSizer(wxVERTICAL);
-    page_sizer->Add(scrolled, 1, wxEXPAND | wxALL, scrolled->FromDIP(4));
-    page->SetSizer(page_sizer);
-    page->Layout();
     scrolled->Layout();
     scrolled->FitInside();
   }
@@ -285,39 +290,30 @@ class WxPatchDialog : public wxDialog {
     rows_.push_back(row);
   }
 
-  // (Re)creates the book contents. seeds carries unsaved checkbox states
-  // across rebuilds (search typing), keyed by file/entry index.
-  void BuildPages(const std::map<std::pair<size_t, size_t>, bool>* seeds) {
-    book_->DeleteAllPages();
+  // (Re)creates the content view. seeds carries unsaved checkbox states
+  // across rebuilds (search typing, file switching), keyed by
+  // file/entry index.
+  void BuildContent(const std::map<std::pair<size_t, size_t>, bool>* seeds) {
+    content_sizer_->Clear(true);
     rows_.clear();
-
-    if (!search_query_.empty()) {
-      BuildSearchPage(seeds);
-      return;
+    if (selected_ >= files_.size()) {
+      selected_ = files_.empty() ? 0 : files_.size() - 1;
     }
-    if (files_.empty()) {
-      auto* page = new wxPanel(book_, wxID_ANY);
-      auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
-                                            wxDefaultSize, wxVSCROLL);
-      scrolled->SetScrollRate(0, FromDIP(10));
-      auto* col = new wxBoxSizer(wxVERTICAL);
+    auto* scrolled = new wxScrolledWindow(page_, wxID_ANY, wxDefaultPosition,
+                                          wxDefaultSize, wxVSCROLL);
+    scrolled->SetScrollRate(0, FromDIP(10));
+    auto* col = new wxBoxSizer(wxVERTICAL);
+    if (!search_query_.empty()) {
+      BuildSearchRows(scrolled, col, seeds);
+    } else if (files_.empty()) {
       col->Add(new wxStaticText(scrolled, wxID_ANY,
                                 WxLabel("No patch files installed for this "
                                         "title.\n\nPlace *.patch.toml files in "
                                         "the patches folder:\n" +
                                         patches_dir_)),
                0, wxALL, FromDIP(8));
-      FinishPage(scrolled, col);
-      book_->AddPage(page, "No patches", true);
-      return;
-    }
-    for (size_t f = 0; f < files_.size(); ++f) {
-      const PatchFile& file = files_[f];
-      auto* page = new wxPanel(book_, wxID_ANY);
-      auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
-                                            wxDefaultSize, wxVSCROLL);
-      scrolled->SetScrollRate(0, FromDIP(10));
-      auto* col = new wxBoxSizer(wxVERTICAL);
+    } else {
+      const PatchFile& file = files_[selected_];
       AddFileHeader(scrolled, col, file.filename);
       if (file.parsed.title_id == static_cast<uint32_t>(-1)) {
         auto* broken = new wxStaticText(
@@ -331,21 +327,44 @@ class WxPatchDialog : public wxDialog {
         col->Add(empty, 0, wxALL, FromDIP(4));
       }
       for (size_t e = 0; e < file.parsed.patch_info.size(); ++e) {
-        AddPatchRow(scrolled, col, f, e, seeds);
+        AddPatchRow(scrolled, col, selected_, e, seeds);
       }
-      FinishPage(scrolled, col);
-      book_->AddPage(page, WxLabel(FileLabel(file.filename)), f == 0);
+    }
+    FinishPage(scrolled, col);
+    content_sizer_->Add(scrolled, 1, wxEXPAND | wxALL, FromDIP(4));
+    UpdateFileChoice();
+    page_->Layout();
+    Layout();
+  }
+
+  void UpdateFileChoice() {
+    file_choice_->Clear();
+    for (const auto& file : files_) {
+      file_choice_->Append(WxLabel(FileLabel(file.filename)));
+    }
+    // Searching shows results across files; the choice follows the
+    // selected file again once the query clears.
+    const bool browsing = search_query_.empty() && !files_.empty();
+    file_choice_->Enable(browsing);
+    if (browsing) {
+      file_choice_->SetSelection(int(selected_));
     }
   }
 
-  // Single flat page with every entry matching the search query, grouped by
-  // file and regardless of which page showed them.
-  void BuildSearchPage(const std::map<std::pair<size_t, size_t>, bool>* seeds) {
-    auto* page = new wxPanel(book_, wxID_ANY);
-    auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
-                                          wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, FromDIP(10));
-    auto* col = new wxBoxSizer(wxVERTICAL);
+  void OnSelectFile(wxCommandEvent&) {
+    const int sel = file_choice_->GetSelection();
+    if (sel < 0 || size_t(sel) >= files_.size() || size_t(sel) == selected_) {
+      return;
+    }
+    const auto values = CollectValues();
+    selected_ = size_t(sel);
+    BuildContent(&values);
+  }
+
+  // Flat rows with every entry matching the search query, grouped by
+  // file. Appends a match-count footer.
+  void BuildSearchRows(wxScrolledWindow* scrolled, wxBoxSizer* col,
+                       const std::map<std::pair<size_t, size_t>, bool>* seeds) {
     size_t matches = 0;
     for (size_t f = 0; f < files_.size(); ++f) {
       const PatchFile& file = files_[f];
@@ -370,11 +389,13 @@ class WxPatchDialog : public wxDialog {
       col->Add(
           new wxStaticText(scrolled, wxID_ANY, "No patches match this search."),
           0, wxALL, FromDIP(8));
+    } else {
+      auto* count = new wxStaticText(
+          scrolled, wxID_ANY,
+          WxLabel(std::to_string(matches) + " matching patches"));
+      count->Enable(false);
+      col->Add(count, 0, wxALL, FromDIP(4));
     }
-    FinishPage(scrolled, col);
-    book_->AddPage(page,
-                   WxLabel("Search results (" + std::to_string(matches) + ")"),
-                   true);
   }
 
   std::map<std::pair<size_t, size_t>, bool> CollectValues() const {
@@ -399,9 +420,7 @@ class WxPatchDialog : public wxDialog {
     }
     search_query_ = query;
     const auto values = CollectValues();
-    BuildPages(&values);
-    book_->InvalidateBestSize();
-    Layout();
+    BuildContent(&values);
   }
 
   void OnSave(wxCommandEvent&) {
@@ -468,7 +487,10 @@ class WxPatchDialog : public wxDialog {
   std::vector<PatchFile> files_;
   std::vector<PatchRow> rows_;
   std::string search_query_;
-  wxTreebook* book_ = nullptr;
+  size_t selected_ = 0;
+  wxChoice* file_choice_ = nullptr;
+  wxPanel* page_ = nullptr;
+  wxBoxSizer* content_sizer_ = nullptr;
   wxSearchCtrl* search_ = nullptr;
   wxButton* save_button_ = nullptr;
   wxTimer search_timer_;
