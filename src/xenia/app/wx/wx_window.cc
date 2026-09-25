@@ -739,8 +739,8 @@ void WxWindow::AttachLibrary(
   library_view_->SetEntries(library_entries_);
   ScanInstalledGames();
   ShowLibrary();
-  // Ratings come from per-title info.toml; compatibility data is only fetched
-  // on manual Refresh, never automatically.
+  // Ratings come from per-title info.toml; imports resolve them from cache
+  // (fetching once when unrated titles remain), manual Refresh forces data.
 
   // Size the frame to the library content, like the content install dialog
   // sizes to its rows: grow a too-small client area (e.g. a tiny persisted
@@ -826,10 +826,19 @@ void WxWindow::ImportLibraryPaths(
   if (ImportGamePaths(library_view_, library_storage_root_, library_entries_,
                       paths)) {
     // New titles resolve against the last fetched data; Unknown when absent.
-    // No fetch is kicked here: updates are manual-only via Refresh.
-    // (Import persists touched titles itself.)
+    // Anything still unrated kicks a cache-aware fetch (no download on a
+    // fresh cache) so adds never need a manual Refresh to show a rating.
+    // Results land through ApplyCompatMap; an in-flight fetch makes the
+    // kick a no-op.
     FillMissingCompat();
     library_view_->SetEntries(library_entries_);
+    const bool any_unrated = std::any_of(
+        library_entries_.begin(), library_entries_.end(), [](const auto& e) {
+          return e.compat.state.empty() && e.compat.url.empty();
+        });
+    if (any_unrated) {
+      RefreshCompat(false);
+    }
   }
 }
 
