@@ -155,7 +155,7 @@ class WxGameConfigDialog : public wxDialog {
     header->SetToolTip(
         "Settings that differ from the global config are listed here and "
         "applied whenever this title starts.");
-    outer->Add(header, 0, wxLEFT | wxRIGHT | wxTOP, 8);
+    outer->Add(header, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
     simple_check_ = new wxCheckBox(this, wxID_ANY, "Simple view");
     simple_check_->SetValue(true);
@@ -166,12 +166,12 @@ class WxGameConfigDialog : public wxDialog {
     search_->SetDescriptiveText("Search all settings by name or description");
     search_->ShowCancelButton(true);
     search_->SetToolTip("Filter all settings by name or description.");
-    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+    outer->Add(search_, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(8));
 
     search_timer_.SetOwner(this);
     book_ = new wxTreebook(this, wxID_ANY);
     BuildPages(nullptr);
-    outer->Add(book_, 1, wxEXPAND | wxALL, 8);
+    outer->Add(book_, 1, wxEXPAND | wxALL, FromDIP(8));
 
     clear_button_ = new wxButton(this, wxID_ANY, "Clear overrides");
     clear_button_->SetToolTip(
@@ -187,14 +187,15 @@ class WxGameConfigDialog : public wxDialog {
     buttons->Add(save_button_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxBOTTOM,
                  8);
     buttons->Add(close_button_, 0,
-                 wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM, 8);
-    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, 8);
+                 wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxBOTTOM,
+                 FromDIP(8));
+    outer->Add(buttons, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
 
     SetSizer(outer);
     Fit();
     wxSize size = GetSize();
-    size.x = std::min(size.x, 1000);
-    size.y = std::min(size.y, 700);
+    size.x = std::min(size.x, FromDIP(1000));
+    size.y = std::min(size.y, FromDIP(700));
     SetSize(size);
 
     simple_check_->Bind(wxEVT_CHECKBOX, &WxGameConfigDialog::OnToggleSimpleView,
@@ -241,12 +242,13 @@ class WxGameConfigDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     // A page with no sizer has no best size of its own, so an unbuilt page
     // would let the book shrink to the first page built. Padding every page to
     // the content cap keeps the dialog's size independent of the build order.
-    page->SetMinSize(wxSize(kConfigPageContentWidth + 2 * kConfigPageBorder,
-                            kConfigPageContentHeight + 2 * kConfigPageBorder));
+    page->SetMinSize(
+        FromDIP(wxSize(kConfigPageContentWidth + 2 * kConfigPageBorder,
+                       kConfigPageContentHeight + 2 * kConfigPageBorder)));
 
     const auto dot = category.find('.');
     const std::string parent =
@@ -344,7 +346,7 @@ class WxGameConfigDialog : public wxDialog {
     auto* page = new wxPanel(book_, wxID_ANY);
     auto* scrolled = new wxScrolledWindow(page, wxID_ANY, wxDefaultPosition,
                                           wxDefaultSize, wxVSCROLL);
-    scrolled->SetScrollRate(0, 10);
+    scrolled->SetScrollRate(0, FromDIP(10));
     auto* col = new wxBoxSizer(wxVERTICAL);
     size_t matches = 0;
     for (auto* var : vars_) {
@@ -357,7 +359,7 @@ class WxGameConfigDialog : public wxDialog {
     if (!matches) {
       col->Add(new wxStaticText(scrolled, wxID_ANY,
                                 "No settings match this search."),
-               0, wxALL, 8);
+               0, wxALL, FromDIP(8));
     }
     FinishConfigPage(scrolled, col);
     book_->AddPage(page,
@@ -383,7 +385,7 @@ class WxGameConfigDialog : public wxDialog {
     auto* row = new wxBoxSizer(wxHORIZONTAL);
     auto* label = new wxStaticText(
         scrolled, wxID_ANY, WxLabel(display_name ? display_name : var->name()));
-    label->SetMinSize(wxSize(kConfigNamePx, -1));
+    label->SetMinSize(wxSize(FromDIP(kConfigNamePx), -1));
     // The config key is what the file stores, so it stays discoverable even
     // when a friendly name is shown instead of it.
     std::string tooltip =
@@ -392,7 +394,7 @@ class WxGameConfigDialog : public wxDialog {
       tooltip += "\n\n(config key: " + var->name() + ")";
     }
     label->SetToolTip(WxLabel(tooltip));
-    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    row->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
 
     // What this title inherits, so an override is visibly a change rather than
     // the only value on screen.
@@ -417,7 +419,7 @@ class WxGameConfigDialog : public wxDialog {
     use_global->Bind(wxEVT_BUTTON, [row_ptr](wxCommandEvent&) {
       SetConfigRowValue(&row_ptr->config, row_ptr->global_text);
     });
-    row->Add(use_global, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    row->Add(use_global, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
 
     const std::optional<std::string> override_value =
         var->game_config_display_value();
@@ -433,7 +435,7 @@ class WxGameConfigDialog : public wxDialog {
     BuildConfigRow(var, scrolled, this, row, &entry->config, current);
 
     rows_.push_back(std::move(entry));
-    col->Add(row, 0, wxEXPAND | wxALL, 2);
+    col->Add(row, 0, wxEXPAND | wxALL, FromDIP(2));
   }
 
   // Rows the Simple view hides keep their overrides: the save path only
@@ -452,7 +454,8 @@ class WxGameConfigDialog : public wxDialog {
       // produce values from fixed sets.
       const bool valid = cvar::IsValidConfigValueText(var->value_kind(), text);
       if (entry->config.text) {
-        entry->config.text->SetBackgroundColour(valid ? wxNullColour : *wxRED);
+        entry->config.text->SetBackgroundColour(valid ? wxNullColour
+                                                      : ErrorBgColour());
         entry->config.text->Refresh();
       }
       if (!valid) {
