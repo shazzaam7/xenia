@@ -5,6 +5,7 @@
 #include <string>
 
 #include <wx/colour.h>
+#include <wx/settings.h>
 #include <wx/string.h>
 #include <wx/window.h>
 
