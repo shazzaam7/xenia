@@ -220,13 +220,13 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
                                     ? disc_path
                                     : disc_path.parent_path();
     std::vector<uint8_t> raw;
+    // Sized via file_size (64-bit clean) rather than ftell/long.
+    std::error_code sec0 = {};
+    const auto nxeart_size = std::filesystem::file_size(dir / "nxeart", sec0);
     FILE* f = xe::filesystem::OpenFile(dir / "nxeart", "rb");
     if (f) {
-      std::fseek(f, 0, SEEK_END);
-      long size = std::ftell(f);
-      std::fseek(f, 0, SEEK_SET);
-      if (size > 0 && size < 64 * 1024 * 1024) {
-        raw.resize(size_t(size));
+      if (!sec0 && nxeart_size > 0 && nxeart_size < 64ull * 1024 * 1024) {
+        raw.resize(size_t(nxeart_size));
         raw.resize(std::fread(raw.data(), 1, raw.size(), f));
       }
       std::fclose(f);
@@ -249,16 +249,18 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
         }
         std::string name = xe::path_to_utf8(it->path().filename());
         std::string lower = name;
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return char(std::tolower(c)); });
+        std::transform(
+            lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+              // ASCII-only (see wx_game_scan.cc Lower).
+              return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+            });
         if (lower == "nxeart") {
+          std::error_code fec = {};
+          const auto fsize = std::filesystem::file_size(it->path(), fec);
           FILE* f2 = xe::filesystem::OpenFile(it->path(), "rb");
           if (f2) {
-            std::fseek(f2, 0, SEEK_END);
-            long sz = std::ftell(f2);
-            std::fseek(f2, 0, SEEK_SET);
-            if (sz > 0 && sz < 64 * 1024 * 1024) {
-              raw.resize(size_t(sz));
+            if (!fec && fsize > 0 && fsize < 64ull * 1024 * 1024) {
+              raw.resize(size_t(fsize));
               raw.resize(std::fread(raw.data(), 1, raw.size(), f2));
               if (!raw.empty()) {
                 nxeart = std::move(raw);
@@ -280,8 +282,11 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
     // Plenty of games ship no nxeart at all; that is not an error.
     for (const auto& entry_name : ListContainerFiles(disc_path, type)) {
       std::string lower = entry_name;
-      std::transform(lower.begin(), lower.end(), lower.begin(),
-                     [](unsigned char c) { return char(std::tolower(c)); });
+      std::transform(
+          lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            // ASCII-only (see wx_game_scan.cc Lower).
+            return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+          });
       if (lower != "nxeart") {
         continue;
       }

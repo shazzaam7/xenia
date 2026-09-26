@@ -57,7 +57,11 @@ std::string FormatDouble(double value, double step) {
 double ParseNumber(const std::string& text) {
   double value = 0.0;
   if (!text.empty()) {
-    std::from_chars(text.data(), text.data() + text.size(), value);
+    const auto [ptr, ec] =
+        std::from_chars(text.data(), text.data() + text.size(), value);
+    if (ec != std::errc() || ptr != text.data() + text.size()) {
+      return 0.0;
+    }
   }
   return value;
 }
@@ -205,6 +209,11 @@ void AddRangeControl(wxWindow* parent, wxBoxSizer* row, ConfigRow* entry,
                    int(std::lround(info.range_min * scale)),
                    int(std::lround(info.range_max * scale)), wxDefaultPosition,
                    wxDefaultSize, wxSL_HORIZONTAL);
+  // value * scale can round 1ulp past the maximum near the top end; clamp
+  // the initial position into range (wx asserts on out-of-range SetValue).
+  entry->slider->SetValue(std::clamp(int(std::lround(value * scale)),
+                                     int(std::lround(info.range_min * scale)),
+                                     int(std::lround(info.range_max * scale))));
 
   // Capture the child controls (not the local ConfigRow) - wx owns their
   // lifetime.
@@ -248,8 +257,10 @@ std::string TrimConfigText(std::string text) {
 }
 
 std::string ToLowerConfigText(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(),
-                 [](unsigned char c) { return char(std::tolower(c)); });
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+    // ASCII-only (see wx_game_scan.cc Lower).
+    return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+  });
   return text;
 }
 
@@ -481,13 +492,23 @@ void SetConfigRowValue(ConfigRow* row, const std::string& text) {
       break;
     }
     case ConfigControlKind::kSlider: {
-      const double value = ParseNumber(text);
+      double value = ParseNumber(text);
+      // Stored values predate range metadata or were hand-edited; clamp so
+      // out-of-range seeds can't trip wx asserts (including 1ulp rounding
+      // past the maximum near the top end).
+      if (row->info) {
+        value = std::clamp(value, row->info->range_min, row->info->range_max);
+      }
       if (row->spin_double) {
         row->spin_double->SetValue(value);
-        row->slider->SetValue(int(std::lround(value * row->slider_scale)));
+        row->slider->SetValue(
+            std::clamp(int(std::lround(value * row->slider_scale)),
+                       row->slider->GetMin(), row->slider->GetMax()));
       } else {
         row->spin->SetValue(int(std::lround(value)));
-        row->slider->SetValue(int(std::lround(value)));
+        row->slider->SetValue(std::clamp(int(std::lround(value)),
+                                         row->slider->GetMin(),
+                                         row->slider->GetMax()));
       }
       break;
     }

@@ -92,8 +92,11 @@ bool HasPngOrJpegMagic(const uint8_t* data, size_t size) {
 }
 
 std::string Lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(),
-                 [](unsigned char c) { return char(std::tolower(c)); });
+  // ASCII-only: std::tolower is locale-mapped (tr_TR breaks 'I'), and these
+  // comparisons are protocol constants (default.xex, $systemupdate).
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+    return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+  });
   return s;
 }
 
