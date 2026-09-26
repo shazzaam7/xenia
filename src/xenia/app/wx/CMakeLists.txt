@@ -64,10 +64,51 @@ target_link_libraries(xenia-app-wx PUBLIC wx::core wx::base)
 # rapidjson is header-only (parses compatibility_data.json).
 target_include_directories(xenia-app-wx PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/rapidjson/include")
+# CA bundle embedded into the binary (see cmake/EmbedCaBundle.cmake): generated
+# at configure time and rebuilt whenever assets/cacert.pem changes. The bundle
+# is authoritative at runtime — no sidecar copy is produced, so updating roots
+# means re-running `xb ca-bundle` and rebuilding. The script emits an
+# empty bundle when the file is absent, and HttpGet then falls back to a
+# cacert.pem found on disk; with neither, verification fails closed.
+set(_cacert_pem "${PROJECT_SOURCE_DIR}/assets/cacert.pem")
+set(_cacert_gen "${CMAKE_CURRENT_BINARY_DIR}/cacert_bundle.cc")
+execute_process(COMMAND ${CMAKE_COMMAND}
+  -DCACERT_PEM=${_cacert_pem} -DOUTPUT=${_cacert_gen}
+  -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake")
+if(EXISTS "${_cacert_pem}")
+  add_custom_command(
+    OUTPUT ${_cacert_gen}
+    COMMAND ${CMAKE_COMMAND}
+      -DCACERT_PEM=${_cacert_pem} -DOUTPUT=${_cacert_gen}
+      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake"
+    DEPENDS ${_cacert_pem}
+    COMMENT "Embedding CA bundle")
+else()
+  # The bundle is fetched by `xb ca-bundle`, not vendored. Surfacing
+  # this at configure time beats an opaque runtime TLS failure on non-Windows
+  # (where wolfSSL has no OS trust store); Windows/Schannel is unaffected.
+  message(WARNING
+    "assets/cacert.pem not found: no CA bundle will be embedded. Run "
+    "`xb ca-bundle` (or place the bundle there) or HTTPS downloads "
+    "will fail cert verification on non-Windows builds.")
+endif()
+# Refresh at build time so `xb ca-bundle` followed by `xb build --no_premake`
+# (no reconfigure) still embeds the new bundle. Cheap (small script) and
+# always out-of-date, so it runs on every build before compiling.
+add_custom_target(xenia-cacert-refresh
+  COMMAND ${CMAKE_COMMAND}
+    -DCACERT_PEM=${_cacert_pem} -DOUTPUT=${_cacert_gen}
+    -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake"
+  COMMENT "Refreshing embedded CA bundle")
+add_dependencies(xenia-app-wx xenia-cacert-refresh)
+target_sources(xenia-app-wx PRIVATE ${_cacert_gen})
 # libcurl powers the compatibility-data download. Prefer the vendored
 # static build, fall back to system curl, else degrade to cache-only
 # (everything reads as Unknown until a cache file exists).
-if(NOT TARGET CURL::libcurl)
+# When the vendored build is wolfSSL-backed (XENIA_CURL_TLS_REQUIRED) the
+# system fallback is skipped: a system OpenSSL curl would silently replace
+# the intended TLS stack.
+if(NOT TARGET CURL::libcurl AND NOT XENIA_CURL_TLS_REQUIRED)
   find_package(CURL QUIET)
 endif()
 if(TARGET CURL::libcurl)

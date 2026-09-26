@@ -116,3 +116,7 @@ node_modules/.bin/
 /cache0
 /devkit
 recent.toml
+
+# Fetched by `xb ca-bundle` (ensure_ca_bundle), not vendored.
+/assets/cacert.pem
+/assets/cacert.pem.tmp
