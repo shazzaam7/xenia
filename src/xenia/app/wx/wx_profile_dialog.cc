@@ -752,8 +752,10 @@ class WxPlayedTitlesDialog : public wxDialog {
       return true;
     }
     std::string name = xe::to_utf8(entry.title_name);
-    std::transform(name.begin(), name.end(), name.begin(),
-                   [](unsigned char c) { return char(std::tolower(c)); });
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+      // ASCII-only (see wx_game_scan.cc Lower).
+      return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+    });
     return name.find(filter_) != std::string::npos;
   }
 
@@ -797,8 +799,11 @@ class WxPlayedTitlesDialog : public wxDialog {
 
   void OnSearch(wxCommandEvent& event) {
     filter_ = event.GetString().ToStdString();
-    std::transform(filter_.begin(), filter_.end(), filter_.begin(),
-                   [](unsigned char c) { return char(std::tolower(c)); });
+    std::transform(
+        filter_.begin(), filter_.end(), filter_.begin(), [](unsigned char c) {
+          // ASCII-only (see wx_game_scan.cc Lower).
+          return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+        });
     Populate();
   }
 

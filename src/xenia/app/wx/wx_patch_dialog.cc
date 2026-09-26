@@ -60,8 +60,10 @@ std::string TrimCopy(std::string_view text) {
 }
 
 std::string ToLowerCopy(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(),
-                 [](unsigned char c) { return char(std::tolower(c)); });
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+    // ASCII-only (see wx_game_scan.cc Lower).
+    return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+  });
   return text;
 }
 
@@ -69,9 +71,16 @@ bool EqualsInsensitive(std::string_view a, std::string_view b) {
   if (a.size() != b.size()) {
     return false;
   }
+  // ASCII-only: title-ID/patch-name comparison; std::tolower is locale-mapped.
   for (size_t i = 0; i < a.size(); ++i) {
-    if (std::tolower(static_cast<unsigned char>(a[i])) !=
-        std::tolower(static_cast<unsigned char>(b[i]))) {
+    char ca = a[i], cb = b[i];
+    if (ca >= 'A' && ca <= 'Z') {
+      ca = char(ca + ('a' - 'A'));
+    }
+    if (cb >= 'A' && cb <= 'Z') {
+      cb = char(cb + ('a' - 'A'));
+    }
+    if (ca != cb) {
       return false;
     }
   }

@@ -70,8 +70,10 @@ namespace wx_ui {
 namespace {
 
 std::string ToLower(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(),
-                 [](unsigned char c) { return char(std::tolower(c)); });
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+    // ASCII-only (see wx_game_scan.cc Lower).
+    return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+  });
   return text;
 }
 

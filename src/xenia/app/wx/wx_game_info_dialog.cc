@@ -70,7 +70,10 @@ std::string LastPlayedLabel(std::time_t t) {
 
 std::string NormalizeHex(std::string s) {
   for (char& c : s) {
-    c = char(std::toupper(static_cast<unsigned char>(c)));
+    // ASCII-only: hex title IDs; std::toupper is locale-mapped.
+    if (c >= 'a' && c <= 'z') {
+      c = char(c - ('a' - 'A'));
+    }
   }
   return s;
 }

@@ -249,8 +249,11 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
         }
         std::string name = xe::path_to_utf8(it->path().filename());
         std::string lower = name;
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return char(std::tolower(c)); });
+        std::transform(
+            lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+              // ASCII-only (see wx_game_scan.cc Lower).
+              return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+            });
         if (lower == "nxeart") {
           FILE* f2 = xe::filesystem::OpenFile(it->path(), "rb");
           if (f2) {
@@ -280,8 +283,11 @@ bool EnsureArtwork(const std::filesystem::path& storage_root,
     // Plenty of games ship no nxeart at all; that is not an error.
     for (const auto& entry_name : ListContainerFiles(disc_path, type)) {
       std::string lower = entry_name;
-      std::transform(lower.begin(), lower.end(), lower.begin(),
-                     [](unsigned char c) { return char(std::tolower(c)); });
+      std::transform(
+          lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            // ASCII-only (see wx_game_scan.cc Lower).
+            return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+          });
       if (lower != "nxeart") {
         continue;
       }
