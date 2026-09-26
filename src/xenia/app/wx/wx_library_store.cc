@@ -38,7 +38,10 @@ namespace {
 // may not be, and Linux filesystems are case-sensitive.
 std::string NormalizeTitleId(std::string title_id) {
   for (char& c : title_id) {
-    c = char(std::toupper(static_cast<unsigned char>(c)));
+    // ASCII-only: hex title IDs; std::toupper is locale-mapped.
+    if (c >= 'a' && c <= 'z') {
+      c = char(c - ('a' - 'A'));
+    }
   }
   return title_id;
 }

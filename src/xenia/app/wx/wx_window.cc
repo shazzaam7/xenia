@@ -880,7 +880,8 @@ namespace {
 std::string LowerAscii(const std::string& s) {
   std::string out;
   for (char c : s) {
-    out += char(std::tolower(static_cast<unsigned char>(c)));
+    // ASCII-only, matching the name: std::tolower is locale-mapped.
+    out += (c >= 'A' && c <= 'Z') ? char(c + ('a' - 'A')) : c;
   }
   return out;
 }
