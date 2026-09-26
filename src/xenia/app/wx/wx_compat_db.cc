@@ -45,8 +45,10 @@ constexpr std::string_view kCompatDataUrl =
     "game-compatibility/compatibility_data.json";
 
 std::string ToUpperHex(std::string text) {
-  std::transform(text.begin(), text.end(), text.begin(),
-                 [](unsigned char c) { return char(std::toupper(c)); });
+  // ASCII-only: title IDs are hex; std::toupper is locale-mapped.
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+    return c >= 'a' && c <= 'z' ? char(c - ('a' - 'A')) : char(c);
+  });
   return text;
 }
 

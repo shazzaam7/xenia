@@ -82,12 +82,17 @@ bool MatchesFilter(const GameEntry& entry, const std::string& filter) {
     return true;
   }
   auto lower = filter;
-  std::transform(lower.begin(), lower.end(), lower.begin(),
-                 [](unsigned char c) { return char(std::tolower(c)); });
+  std::transform(
+      lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        // ASCII-only (see wx_game_scan.cc Lower).
+        return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+      });
   auto contains = [&](const std::string& hay) {
     std::string h = hay;
-    std::transform(h.begin(), h.end(), h.begin(),
-                   [](unsigned char c) { return char(std::tolower(c)); });
+    std::transform(h.begin(), h.end(), h.begin(), [](unsigned char c) {
+      // ASCII-only (see wx_game_scan.cc Lower).
+      return c >= 'A' && c <= 'Z' ? char(c + ('a' - 'A')) : char(c);
+    });
     return h.find(lower) != std::string::npos;
   };
   return contains(entry.name) || contains(entry.title_id);
@@ -332,8 +337,18 @@ void WxLibraryView::ApplySort() {
   }
   auto by_title = [&](size_t a, size_t b) {
     std::string x = entries_[a].name, y = entries_[b].name;
-    std::transform(x.begin(), x.end(), x.begin(), ::tolower);
-    std::transform(y.begin(), y.end(), y.begin(), ::tolower);
+    // ASCII-only case fold for ordering (and no ::tolower on plain char,
+    // which is UB for non-ASCII bytes).
+    for (char& c : x) {
+      if (c >= 'A' && c <= 'Z') {
+        c = char(c + ('a' - 'A'));
+      }
+    }
+    for (char& c : y) {
+      if (c >= 'A' && c <= 'Z') {
+        c = char(c + ('a' - 'A'));
+      }
+    }
     return sort_ascending_ ? x < y : x > y;
   };
   auto by_title_id = [&](size_t a, size_t b) {
