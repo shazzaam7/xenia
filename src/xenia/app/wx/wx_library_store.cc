@@ -38,7 +38,10 @@ namespace {
 // may not be, and Linux filesystems are case-sensitive.
 std::string NormalizeTitleId(std::string title_id) {
   for (char& c : title_id) {
-    c = char(std::toupper(static_cast<unsigned char>(c)));
+    // ASCII-only: hex title IDs; std::toupper is locale-mapped.
+    if (c >= 'a' && c <= 'z') {
+      c = char(c - ('a' - 'A'));
+    }
   }
   return title_id;
 }
@@ -56,15 +59,26 @@ bool PruneEntry(GameEntry& entry) {
   std::vector<GameDisc> kept;
   for (auto& disc : entry.discs) {
     if (!disc.path.empty() && std::filesystem::exists(disc.path, ec)) {
-      disc.number = int(kept.size()) + 1;
+      // Keep the stored disc number: renumbering would shift
+      // last_played_disc and any UI referring to the original identity.
       kept.push_back(std::move(disc));
     }
   }
   entry.discs = std::move(kept);
-  if (entry.last_played_disc > int(entry.discs.size())) {
-    entry.last_played_disc = 1;
+  if (entry.discs.empty()) {
+    return false;
   }
-  return !entry.discs.empty();
+  bool last_known = false;
+  for (const auto& disc : entry.discs) {
+    if (disc.number == entry.last_played_disc) {
+      last_known = true;
+      break;
+    }
+  }
+  if (!last_known) {
+    entry.last_played_disc = entry.discs.front().number;
+  }
+  return true;
 }
 
 bool ReadEntry(const std::filesystem::path& info_path,
@@ -168,12 +182,15 @@ bool LoadLibrary(const std::filesystem::path& storage_root,
                    entry)) {
       continue;
     }
-    if (PruneEntry(entry)) {
-      entries_out.push_back(std::move(entry));
+    GameEntry pruned = entry;
+    if (PruneEntry(pruned)) {
+      entries_out.push_back(std::move(pruned));
     } else {
-      // All discs vanished: drop the title folder (metadata and artwork).
-      std::error_code ec3 = {};
-      std::filesystem::remove_all(TitleDir(storage_root, title_id), ec3);
+      // All discs are currently unreachable (unplugged drive, renamed mount,
+      // offline share): keep the entry with its stored paths so metadata and
+      // artwork survive. The title folder is only deleted on explicit
+      // removal (RemoveTitle), never on load.
+      entries_out.push_back(std::move(entry));
     }
   }
   return true;
