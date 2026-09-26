@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <wx/bitmap.h>
+#include <wx/button.h>
 #include <wx/event.h>
 #include <wx/imaglist.h>
 #include <wx/listctrl.h>
