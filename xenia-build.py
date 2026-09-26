@@ -20,6 +20,8 @@ import subprocess
 import sys
 import stat
 import enum
+import hashlib
+import urllib.request
 
 __author__ = "ben.vanik@gmail.com (Ben Vanik)"
 
@@ -632,6 +634,114 @@ def git_submodule_update():
         ])
 
 
+CA_BUNDLE_URL = "https://curl.se/ca/cacert.pem"
+CA_BUNDLE_SHA_URL = "https://curl.se/ca/cacert.pem.sha256"
+CA_BUNDLE_PATH = os.path.join(self_path, "assets", "cacert.pem")
+
+def _sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def _fetch(url):
+    with urllib.request.urlopen(url, timeout=60) as response:
+        return response.read()
+
+def _is_pem_bundle(data):
+    return b"BEGIN CERTIFICATE" in data
+
+def _ca_bundle_expected_sha():
+    """Returns the published SHA-256 of the current bundle, or None."""
+    try:
+        sha_text = _fetch(CA_BUNDLE_SHA_URL).decode("utf-8", "replace")
+    except Exception as e:
+        print_warning(f"Could not fetch CA bundle checksum ({e}).")
+        return None
+    matches = re_findall(r"[0-9a-fA-F]{64}", sha_text)
+    if not matches:
+        print_warning("CA bundle checksum file has unexpected format.")
+        return None
+    return matches[0].lower()
+
+def verify_ca_bundle():
+    """Checks the on-disk bundle against the published checksum.
+
+    Returns True when a bundle exists and matches. Never downloads.
+    When the checksum cannot be fetched (offline), falls back to a PEM
+    sanity check so a transient network failure does not fail CI after
+    a successful `ca-bundle` fetch.
+    """
+    if not os.path.exists(CA_BUNDLE_PATH):
+        print_warning("No CA bundle present. Run `xb ca-bundle`.")
+        return False
+    expected = _ca_bundle_expected_sha()
+    if expected is None:
+        try:
+            with open(CA_BUNDLE_PATH, "rb") as f:
+                if _is_pem_bundle(f.read()):
+                    print_warning("Could not fetch CA bundle checksum; existing bundle looks like PEM, accepting.")
+                    return True
+        except OSError as e:
+            print_warning(f"Could not read CA bundle ({e}).")
+        return False
+    try:
+        actual = _sha256_of(CA_BUNDLE_PATH)
+    except OSError as e:
+        print_warning(f"Could not read CA bundle ({e}).")
+        return False
+    if actual != expected:
+        print_warning("CA bundle is stale. Run `xb ca-bundle` to refresh.")
+        return False
+    return True
+
+def ensure_ca_bundle():
+    """Fetches the Mozilla CA bundle used for hermetic TLS (wolfSSL).
+
+    wolfSSL has no OS trust store, so HTTPS downloads (compatibility data,
+    patches) need an explicit bundle. `xb ca-bundle` downloads it into
+    assets/ (gitignored), where the build embeds it. Re-verifies the on-disk
+    copy against the published checksum and re-downloads when stale. All
+    failures are non-fatal here (the caller decides): a build without a
+    bundle still works, HTTPS downloads just fail closed at runtime.
+    """
+    expected = _ca_bundle_expected_sha()
+    if expected is None:
+        return False
+
+    if os.path.exists(CA_BUNDLE_PATH):
+        try:
+            if _sha256_of(CA_BUNDLE_PATH) == expected:
+                print("- CA bundle is up to date.")
+                return True
+            print("- CA bundle is stale, re-downloading...")
+        except OSError as e:
+            print_warning(f"Could not read existing CA bundle ({e}), re-downloading.")
+
+    try:
+        pem = _fetch(CA_BUNDLE_URL)
+    except Exception as e:
+        print_warning(f"Could not download CA bundle ({e}). HTTPS downloads will fail closed at runtime.")
+        return False
+    if hashlib.sha256(pem).hexdigest() != expected:
+        print_warning("CA bundle checksum mismatch, discarding download.")
+        return False
+    if not _is_pem_bundle(pem):
+        print_warning("Downloaded CA bundle is not a PEM certificate bundle, discarding.")
+        return False
+    tmp_path = CA_BUNDLE_PATH + ".tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(pem)
+        os.replace(tmp_path, CA_BUNDLE_PATH)
+    except OSError as e:
+        print_warning(f"Could not write CA bundle ({e}).")
+        return False
+    print("- CA bundle downloaded.")
+    return True
+
+
 def get_cc(cc=None):
     if sys.platform == "linux":
         if os.environ.get("CC"):
@@ -985,6 +1095,7 @@ def discover_commands(subparsers):
     """
     commands = {
         "setup": SetupCommand(subparsers),
+        "ca-bundle": CaBundleCommand(subparsers),
         "pull": PullCommand(subparsers),
         "premake": PremakeCommand(subparsers),
         "build": BuildCommand(subparsers),
@@ -1055,6 +1166,10 @@ class SetupCommand(Command):
         self.parser.add_argument(
             "--target-arch", type=normalize_target_arch, default=None,
             help="Target architecture (arm64/aarch64, x64/amd64/x86_64/x86).")
+        self.parser.add_argument(
+            "--ca-bundle", action="store_true",
+            help="Also run the `ca-bundle` command (HTTPS downloads on "
+            "non-Windows need it; re-run to refresh).")
 
     def execute(self, args, pass_args, cwd):
         print("Setting up the build environment...\n")
@@ -1066,10 +1181,47 @@ class SetupCommand(Command):
         else:
             print_warning("Git not available or not a repository. Dependencies may be missing.")
 
+        # CA bundle for hermetic TLS: opt-in, as it reaches out to the network.
+        # Non-fatal when offline; without it HTTPS downloads fail closed on
+        # non-Windows (Schannel uses the OS cert store on Windows).
+        if args["ca_bundle"]:
+            print("\n- fetching CA bundle...")
+            ensure_ca_bundle()
+        else:
+            print("\n- skipping CA bundle (pass --ca-bundle, or run `xb ca-bundle`)")
+
         print("\n- running cmake configure...")
         ret = run_cmake_configure(target_arch=args["target_arch"])
         print_status(ResultStatus.SUCCESS if not ret else ResultStatus.FAILURE)
         return ret
+
+
+class CaBundleCommand(Command):
+    """'ca-bundle' command.
+    """
+
+    def __init__(self, subparsers, *args, **kwargs):
+        super(CaBundleCommand, self).__init__(
+            subparsers,
+            name="ca-bundle",
+            help_short="Fetches the Mozilla CA bundle used for HTTPS downloads.",
+            *args, **kwargs)
+        self.parser.add_argument(
+            "--verify-only", action="store_true",
+            help="Only check the existing bundle; fail instead of downloading.")
+
+    def execute(self, args, pass_args, cwd):
+        if args["verify_only"]:
+            print("Verifying the CA bundle...\n")
+            return 0 if verify_ca_bundle() else 1
+        print("Fetching the CA bundle...\n")
+        if ensure_ca_bundle():
+            print_status(ResultStatus.SUCCESS)
+            return 0
+        # Non-fatal for local runs, but a build without a bundle cannot verify
+        # TLS on non-Windows, so callers that need it (CI) must fail loudly.
+        print_status(ResultStatus.FAILURE)
+        return 1
 
 
 class PullCommand(Command):

@@ -191,6 +191,13 @@ You will also need some development libraries. To get them on an Ubuntu system:
 sudo apt-get install build-essential mesa-vulkan-drivers valgrind libc++-dev libc++abi-dev libgtk-3-dev liblz4-dev libsdl2-dev libssl-dev libvulkan-dev libx11-xcb-dev clang-19 llvm-19 ninja-build
 ```
 
+wolfSSL has no OS trust store, so `xb ca-bundle` fetches a Mozilla CA bundle
+(checksum-verified against `https://curl.se/ca/cacert.pem.sha256`) into
+`assets/cacert.pem`, which the build embeds into the executable. Without it the build
+warns and HTTPS downloads fail cert verification. Re-run it to refresh the
+bundle, then rebuild (`xb build` reconfigures automatically; the embed step
+also refreshes at build time so `--no_premake` still picks up a new bundle).
+
 In addition, you will need up to date Vulkan libraries and drivers for your hardware, which most distributions have in their standard repositories nowadays.
 
 **Vulkan SDK (for shader compilation)**

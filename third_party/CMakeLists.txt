@@ -135,21 +135,119 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # ==============================================================================
+# wolfSSL (TLS backend for vendored libcurl on non-Windows)
+# ==============================================================================
+# Built once at configure time into <binary>/wolfssl-install so curl's
+# FindWolfSSL module (third_party/curl/CMake/FindWolfSSL.cmake) can consume
+# it via WOLFSSL_INCLUDE_DIR/WOLFSSL_LIBRARY below. Windows keeps Schannel
+# (OS cert store, no extra deps) and skips this entirely.
+# Pass -DXENIA_REQUIRE_WOLFSSL=ON (CI) to fail loudly instead of falling back
+# to system TLS or cache-only when the hermetic build is unavailable.
+option(XENIA_REQUIRE_CURL "Fail configure if vendored libcurl with TLS cannot be built" OFF)
+option(XENIA_REQUIRE_WOLFSSL "Fail configure if the hermetic wolfSSL backend cannot be built (non-Windows)" OFF)
+if(NOT WIN32 AND XENIA_REQUIRE_WOLFSSL AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt")
+  message(FATAL_ERROR "wolfSSL: submodule absent but XENIA_REQUIRE_WOLFSSL=ON")
+endif()
+if(NOT WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt")
+  set(_wolfssl_install "${CMAKE_BINARY_DIR}/wolfssl-install")
+  set(_wolfssl_lib "${_wolfssl_install}/lib/libwolfssl.a")
+  if(NOT EXISTS "${_wolfssl_lib}")
+    message(STATUS "wolfSSL: configuring hermetic build (WOLFSSL_CURL preset)")
+    set(_wolfssl_args
+      -S "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl"
+      -B "${CMAKE_BINARY_DIR}/wolfssl-build"
+      -G "${CMAKE_GENERATOR}"
+      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_INSTALL_PREFIX=${_wolfssl_install}
+      # Pinned (not GNUInstallDirs default): multiarch systems would install
+      # to lib/<triplet>, which _wolfssl_lib below would not find.
+      -DCMAKE_INSTALL_LIBDIR=lib
+      -DBUILD_SHARED_LIBS=OFF
+      -DWOLFSSL_CURL=ON)
+    # Forward the toolchain bits that matter so the nested build uses the
+    # same compiler/SDK (notably macOS arch/sysroot for ARM64 builds).
+    foreach(_fwd CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_TOOLCHAIN_FILE
+                CMAKE_OSX_ARCHITECTURES CMAKE_OSX_SYSROOT CMAKE_OSX_DEPLOYMENT_TARGET)
+      if(DEFINED ${_fwd})
+        list(APPEND _wolfssl_args -D${_fwd}=${${_fwd}})
+      endif()
+    endforeach()
+    execute_process(COMMAND ${CMAKE_COMMAND} ${_wolfssl_args}
+      RESULT_VARIABLE _wolfssl_cfg_rc
+      OUTPUT_VARIABLE _wolfssl_cfg_out
+      ERROR_VARIABLE _wolfssl_cfg_out)
+    if(NOT _wolfssl_cfg_rc EQUAL 0)
+      if(XENIA_REQUIRE_WOLFSSL)
+        message(FATAL_ERROR "wolfSSL configure failed:\n${_wolfssl_cfg_out}")
+      endif()
+      message(WARNING "wolfSSL configure failed:\n${_wolfssl_cfg_out}")
+    else()
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}/wolfssl-build"
+                --config Release --target install --parallel
+        RESULT_VARIABLE _wolfssl_build_rc
+        OUTPUT_VARIABLE _wolfssl_build_out
+        ERROR_VARIABLE _wolfssl_build_out)
+      if(NOT _wolfssl_build_rc EQUAL 0)
+        if(XENIA_REQUIRE_WOLFSSL)
+          message(FATAL_ERROR "wolfSSL build failed:\n${_wolfssl_build_out}")
+        endif()
+        message(WARNING "wolfSSL build failed:\n${_wolfssl_build_out}")
+      endif()
+    endif()
+    unset(_wolfssl_args)
+    unset(_fwd)
+    unset(_wolfssl_cfg_rc)
+    unset(_wolfssl_cfg_out)
+    unset(_wolfssl_build_rc)
+    unset(_wolfssl_build_out)
+  endif()
+  if(EXISTS "${_wolfssl_lib}")
+    set(WOLFSSL_INCLUDE_DIR "${_wolfssl_install}/include"
+        CACHE PATH "wolfSSL include dir" FORCE)
+    set(WOLFSSL_LIBRARY "${_wolfssl_lib}"
+        CACHE FILEPATH "wolfSSL library" FORCE)
+  else()
+    if(XENIA_REQUIRE_WOLFSSL)
+      message(FATAL_ERROR "wolfSSL: hermetic build unavailable but XENIA_REQUIRE_WOLFSSL=ON")
+    endif()
+    message(STATUS "wolfSSL: hermetic build unavailable, will try system TLS")
+    unset(WOLFSSL_INCLUDE_DIR CACHE)
+    unset(WOLFSSL_LIBRARY CACHE)
+  endif()
+  unset(_wolfssl_install)
+  unset(_wolfssl_lib)
+else()
+  # Submodule absent (or Windows/Schannel): drop any stale pointers from a
+  # previous configure so the curl gate below cannot take the wolfSSL branch.
+  unset(WOLFSSL_INCLUDE_DIR CACHE)
+  unset(WOLFSSL_LIBRARY CACHE)
+endif()
+
+# ==============================================================================
 # curl (libcurl, static — HTTPS downloads, e.g. compatibility data)
 # ==============================================================================
 # Skipped when the submodule is absent (non-recursive clones); consumers
 # fall back to system curl or cache-only behavior (see src/xenia/app/wx).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
-  # TLS backend: Schannel on Windows (no extra deps). Elsewhere OpenSSL is
-  # required — without it there is no TLS, so curl is skipped entirely.
+  # TLS backend: Schannel on Windows (no extra deps). Elsewhere wolfSSL is
+  # preferred (hermetic, see above); OpenSSL is the fallback when the
+  # wolfSSL submodule is absent.
   set(XENIA_CURL_TLS_OK TRUE)
+  set(XENIA_CURL_TLS_REQUIRED FALSE CACHE INTERNAL "vendored curl is wolfSSL-backed")
   if(WIN32)
     set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    set(CURL_USE_WOLFSSL OFF CACHE BOOL "" FORCE)
+  elseif(DEFINED WOLFSSL_LIBRARY AND EXISTS "${WOLFSSL_LIBRARY}")
+    set(CURL_USE_WOLFSSL ON CACHE BOOL "" FORCE)
+    set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(XENIA_CURL_TLS_REQUIRED TRUE CACHE INTERNAL "vendored curl is wolfSSL-backed")
   else()
+    set(CURL_USE_WOLFSSL OFF CACHE BOOL "" FORCE)
     find_package(OpenSSL QUIET)
     if(NOT OPENSSL_FOUND)
       set(XENIA_CURL_TLS_OK FALSE)
-      message(STATUS "curl: OpenSSL not found, skipping vendored libcurl")
+      message(STATUS "curl: no wolfSSL and no OpenSSL, skipping vendored libcurl")
     endif()
   endif()
   if(XENIA_CURL_TLS_OK)
@@ -177,8 +275,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/curl/CMakeLists.txt")
       unset(BUILD_SHARED_LIBS)
     endif()
     unset(_xenia_saved_shared_libs)
+  else()
+    if(XENIA_REQUIRE_CURL)
+      message(FATAL_ERROR "curl: no TLS backend (no wolfSSL and no OpenSSL) but XENIA_REQUIRE_CURL=ON")
+    endif()
+  endif()
+  if(NOT WIN32 AND XENIA_REQUIRE_WOLFSSL AND NOT XENIA_CURL_TLS_REQUIRED)
+    message(FATAL_ERROR "curl: hermetic wolfSSL backend unavailable but XENIA_REQUIRE_WOLFSSL=ON")
   endif()
   unset(XENIA_CURL_TLS_OK)
+else()
+  if(XENIA_REQUIRE_CURL)
+    message(FATAL_ERROR "curl: submodule absent but XENIA_REQUIRE_CURL=ON")
+  endif()
 endif()
 
 # ==============================================================================
