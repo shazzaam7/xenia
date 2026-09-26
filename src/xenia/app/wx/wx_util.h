@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include <wx/colour.h>
 #include <wx/settings.h>
@@ -35,8 +36,13 @@ inline wxString WxLabel(const std::string& text) {
 }
 
 inline std::filesystem::path WxToPath(const wxString& string) {
-  return xe::to_path(
-      std::u16string_view(reinterpret_cast<const char16_t*>(string.wc_str())));
+  // Must not go through wc_str(): that is wchar_t*, which is 2 bytes on
+  // Windows but 4 on POSIX, so reinterpreting it as char16_t and letting
+  // u16string_view stop at the first NUL truncated every path to its first
+  // character on Linux ("/home/goose/...iso" became "/", and the library
+  // scanner then walked the entire filesystem). The UTF-8 buffer is what
+  // std::filesystem wants on every platform.
+  return xe::to_path(std::string_view(string.ToUTF8()));
 }
 
 // True when the OS window background is dark (i.e. a dark theme is active).
