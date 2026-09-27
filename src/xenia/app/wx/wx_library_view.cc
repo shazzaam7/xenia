@@ -9,13 +9,17 @@
 
 #include "xenia/app/wx/wx_library_view.h"
 
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
+#include <string>
+#include <thread>
 
 #include <wx/bitmap.h>
 #include <wx/button.h>
@@ -34,6 +38,7 @@
 #include <wx/sizer.h>
 #include <wx/srchctrl.h>
 #include <wx/stattext.h>
+#include <wx/utils.h>
 
 #include "xenia/app/wx/wx_compat_db.h"
 #include "xenia/app/wx/wx_game_art.h"
@@ -64,7 +69,6 @@ enum : int {
   kIdMode,
   kIdAdd,
   kIdScan,
-  kIdProfile,
   kIdMenuBoot,
   kIdMenuDisc,
   kIdMenuFolder,
@@ -135,8 +139,6 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   bar->Add(scan, 0, wxRIGHT, FromDIP(8));
   bar->Add(mode, 0, wxRIGHT, FromDIP(8));
   bar->Add(search_, 1, wxEXPAND);
-  profile_button_ = new wxButton(this, kIdProfile, "Profile");
-  bar->Add(profile_button_, 0, wxLEFT, FromDIP(8));
 
   book_ = new wxSimplebook(this, wxID_ANY);
   table_ = new wxListCtrl(book_, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -167,7 +169,6 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_CHOICE, &WxLibraryView::OnMode, this, kIdMode);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
-  Bind(wxEVT_BUTTON, &WxLibraryView::OnProfile, this, kIdProfile);
   Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuEditInfo);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
@@ -601,12 +602,6 @@ void WxLibraryView::OnScan(wxCommandEvent&) {
   }
 }
 
-void WxLibraryView::OnProfile(wxCommandEvent&) {
-  if (delegate_) {
-    delegate_->OnProfileMenu();
-  }
-}
-
 void WxLibraryView::OnMenu(wxCommandEvent& event) {
   if (!delegate_ || menu_index_ >= entries_.size()) {
     return;
@@ -694,6 +689,20 @@ bool ImportGamePaths(wxWindow* parent,
     return false;
   }
   bool refresh_art = !ArtCacheCurrent(storage_root);
+  // Heavy work (container parsing, image decode, directory walks) runs on a
+  // worker so a folder of hundreds of ISOs doesn't freeze the UI; the modal
+  // dialog below only pumps progress. entries is touched by the worker alone
+  // while the APP_MODAL dialog blocks re-entrant library access.
+  struct ImportJob {
+    std::atomic<size_t> done{0};
+    std::atomic<bool> cancel{false};
+    std::atomic<bool> finished{false};
+    std::mutex current_mutex;
+    std::string current;
+    bool changed = false;
+    bool completed = true;
+  };
+  auto job = std::make_shared<ImportJob>();
   auto already_have = [&](const std::filesystem::path& p) {
     if (refresh_art) {
       return false;
@@ -711,44 +720,67 @@ bool ImportGamePaths(wxWindow* parent,
     }
     return false;
   };
+  std::thread worker([&, job]() {
+    for (size_t i = 0; i < paths.size(); i++) {
+      if (job->cancel.load()) {
+        job->completed = false;
+        break;
+      }
+      const auto& path = paths[i];
+      {
+        std::lock_guard<std::mutex> lock(job->current_mutex);
+        job->current = xe::path_to_utf8(path.filename());
+      }
+      if (already_have(path)) {
+        job->done.store(i + 1);
+        continue;
+      }
+      GameMeta meta;
+      if (!ReadGameMeta(path, meta) || !meta.ok || meta.title_id.empty() ||
+          meta.title_id == "00000000") {
+        XELOGW("Library: skipping unrecognized file {}",
+               xe::path_to_utf8(path));
+        job->done.store(i + 1);
+        continue;
+      }
+      std::string name =
+          meta.name.empty() ? xe::path_to_utf8(path.stem()) : meta.name;
+      if (MergeScannedGame(entries, path, meta.title_id, meta.media_id,
+                           meta.version, name)) {
+        // Persist just the touched title; other titles are untouched.
+        if (const GameEntry* touched = FindEntry(entries, meta.title_id)) {
+          WriteEntry(storage_root, *touched);
+        }
+        job->changed = true;
+      }
+      EnsureArtwork(storage_root, path, meta.type, meta.icon_bytes,
+                    meta.title_id);
+      job->done.store(i + 1);
+    }
+    if (refresh_art && job->completed) {
+      StampArtCache(storage_root);
+    }
+    job->finished.store(true);
+  });
   wxProgressDialog progress("Scanning games", "Reading game files...",
                             int(paths.size()), parent,
                             wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE);
-  bool changed = false;
-  bool completed = true;
-  for (size_t i = 0; i < paths.size(); i++) {
-    if (!progress.Update(int(i),
-                         WxLabel(xe::path_to_utf8(paths[i].filename())))) {
-      completed = false;
-      break;  // Cancelled.
+  // Pump only: Update() processes pending UI events (keeping Cancel alive)
+  // while the worker owns the heavy lifting.
+  while (!job->finished.load()) {
+    std::string current;
+    {
+      std::lock_guard<std::mutex> lock(job->current_mutex);
+      current = job->current;
     }
-    const auto& path = paths[i];
-    if (already_have(path)) {
-      continue;
+    if (!progress.Update(int(job->done.load()), WxLabel(current))) {
+      job->cancel.store(true);
     }
-    GameMeta meta;
-    if (!ReadGameMeta(path, meta) || !meta.ok || meta.title_id.empty() ||
-        meta.title_id == "00000000") {
-      XELOGW("Library: skipping unrecognized file {}", xe::path_to_utf8(path));
-      continue;
-    }
-    std::string name =
-        meta.name.empty() ? xe::path_to_utf8(path.stem()) : meta.name;
-    if (MergeScannedGame(entries, path, meta.title_id, meta.media_id,
-                         meta.version, name)) {
-      // Persist just the touched title; other titles are untouched.
-      if (const GameEntry* touched = FindEntry(entries, meta.title_id)) {
-        WriteEntry(storage_root, *touched);
-      }
-      changed = true;
-    }
-    EnsureArtwork(storage_root, path, meta.type, meta.icon_bytes,
-                  meta.title_id);
+    wxMilliSleep(50);
   }
-  if (refresh_art && completed) {
-    StampArtCache(storage_root);
-  }
-  return changed;
+  worker.join();
+  progress.Update(int(paths.size()));
+  return job->changed;
 }
 
 }  // namespace wx_ui
