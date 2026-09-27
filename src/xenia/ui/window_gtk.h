@@ -99,12 +99,17 @@ class GTKMenuItem : public MenuItem {
  protected:
   void OnChildAdded(MenuItem* child_item) override;
   void OnChildRemoved(MenuItem* child_item) override;
+  void OnCheckedChanged() override;
 
  private:
   static void ActivateHandler(GtkWidget* menu_item, gpointer user_data);
 
   // An owning reference because a menu may be transferred between windows.
   GtkWidget* menu_ = nullptr;
+  // Set while OnCheckedChanged drives the widget's active state, because GTK
+  // emits "activate" on a check menu item when it is toggled programmatically
+  // and that would re-enter the item's own callback.
+  bool setting_checked_ = false;
 };
 
 }  // namespace ui
