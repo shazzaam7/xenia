@@ -937,7 +937,11 @@ std::unique_ptr<ui::MenuItem> MenuItem::Create(Type type,
 }
 
 void GTKMenuItem::ActivateHandler(GtkWidget* menu_item, gpointer user_data) {
-  static_cast<GTKMenuItem*>(user_data)->OnSelected();
+  auto item = static_cast<GTKMenuItem*>(user_data);
+  if (item->setting_checked_) {
+    return;
+  }
+  item->OnSelected();
   // The menu item might have been destroyed by its OnSelected, don't do
   // anything with it here from now on.
 }
@@ -963,6 +967,7 @@ GTKMenuItem::GTKMenuItem(Type type, const std::string& text,
       menu_ = gtk_separator_menu_item_new();
       break;
     case MenuItem::Type::kString:
+    case MenuItem::Type::kRadio:
       if (!hotkey.empty()) {
         // Create a box to hold the label and the accelerator
         GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -978,11 +983,24 @@ GTKMenuItem::GTKMenuItem(Type type, const std::string& text,
         gtk_box_pack_end(GTK_BOX(box), accel_label, FALSE, FALSE, 0);
 
         // Create menu item and add the box
-        menu_ = gtk_menu_item_new();
-        gtk_container_add(GTK_CONTAINER(menu_), box);
+        if (type == MenuItem::Type::kRadio) {
+          // A check menu item already owns a box holding the check indicator,
+          // so the label box has to go in through set_child - adding a second
+          // child to the GtkBin would be rejected.
+          menu_ = gtk_check_menu_item_new();
+          gtk_check_menu_item_set_child(GTK_CHECK_MENU_ITEM(menu_), box);
+        } else {
+          menu_ = gtk_menu_item_new();
+          gtk_container_add(GTK_CONTAINER(menu_), box);
+        }
         gtk_widget_show_all(box);
+      } else if (type == MenuItem::Type::kRadio) {
+        menu_ = gtk_check_menu_item_new_with_mnemonic(gtk_label);
       } else {
         menu_ = gtk_menu_item_new_with_mnemonic(gtk_label);
+      }
+      if (type == MenuItem::Type::kRadio && GTK_IS_CHECK_MENU_ITEM(menu_)) {
+        gtk_check_menu_item_set_draw_as_radio(GTK_CHECK_MENU_ITEM(menu_), TRUE);
       }
       break;
   }
@@ -1000,6 +1018,17 @@ GTKMenuItem::~GTKMenuItem() {
   if (menu_) {
     g_object_unref(menu_);
   }
+}
+
+void GTKMenuItem::OnCheckedChanged() {
+  if (!GTK_IS_CHECK_MENU_ITEM(menu_)) {
+    return;
+  }
+  // Guarded so the "activate" that GTK emits for a programmatic toggle does
+  // not re-enter the item's own callback.
+  setting_checked_ = true;
+  gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(menu_), checked_);
+  setting_checked_ = false;
 }
 
 void GTKMenuItem::OnChildAdded(MenuItem* generic_child_item) {
@@ -1023,6 +1052,7 @@ void GTKMenuItem::OnChildAdded(MenuItem* generic_child_item) {
       }
       break;
     case Type::kSeparator:
+    case Type::kRadio:
     case Type::kString:
       assert(GTK_IS_MENU_ITEM(menu_));
       // Get sub menu and if it doesn't exist create it

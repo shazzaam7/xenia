@@ -218,6 +218,14 @@ using namespace xe::gpu;
 constexpr std::string_view kRecentlyPlayedTitlesFilename = "recent.toml";
 constexpr std::string_view kBaseTitle = "Xenia-canary";
 
+// Settings > Theme radio group, in menu order. The values are the
+// cvars::ui_theme choices; UpdateThemeMenuItems keeps the dot on the active
+// one.
+constexpr std::array<std::string_view, 3> kThemeValues = {"system", "light",
+                                                          "dark"};
+constexpr std::array<const char*, 3> kThemeLabels = {"Follow &system", "&Light",
+                                                     "&Dark"};
+
 EmulatorWindow::EmulatorWindow(Emulator* emulator,
                                ui::WindowedAppContext& app_context,
                                uint32_t width, uint32_t height)
@@ -1002,48 +1010,39 @@ bool EmulatorWindow::Initialize() {
   }
   main_menu->AddChild(std::move(profile_menu));
 
-  // Content Menu
-  auto content_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Content");
-  auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
+  // Emulation menu: configuring and inspecting the emulated machine rather
+  // than the host UI.
+  auto emulation_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Emulation");
   {
-    content_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Install Content",
-                         std::bind(&EmulatorWindow::InstallContent, this)));
-    content_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Extract Content",
-                         std::bind(&EmulatorWindow::ExtractContent, this, "")));
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Create",
-                         std::bind(&EmulatorWindow::CreateZarchive, this)));
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Extract",
-                         std::bind(&EmulatorWindow::ExtractZarchive, this)));
-    content_menu->AddChild(std::move(zar_menu));
-    content_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Show content directory...",
-        std::bind(&EmulatorWindow::ShowContentDirectory, this)));
-  }
-  main_menu->AddChild(std::move(content_menu));
-
-  // Console menu
-  auto console_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Console");
-  {
-    console_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Open console settings", "",
+    emulation_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "&Console Settings", "",
         std::bind(&EmulatorWindow::ShowConsoleSettingsDialog, this)));
-  }
-  main_menu->AddChild(std::move(console_menu));
 
-  // Config menu
-  auto config_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Config");
-  {
     auto open_config = MenuItem::Create(
-        MenuItem::Type::kString, "&Open config editor", "",
+        MenuItem::Type::kString, "Con&figuration", "",
         std::bind(&EmulatorWindow::ShowConfigEditorDialog, this));
     config_editor_item_ = open_config.get();
-    config_menu->AddChild(std::move(open_config));
+    emulation_menu->AddChild(std::move(open_config));
+
+    auto post_processing = MenuItem::Create(
+        MenuItem::Type::kString, "&Post-processing settings", "F6",
+        std::bind(&EmulatorWindow::ToggleDisplayConfigDialog, this));
+    post_processing_item_ = post_processing.get();
+    emulation_menu->AddChild(std::move(post_processing));
+
+    auto controller_hotkeys = MenuItem::Create(
+        MenuItem::Type::kString, "&Display controller hotkeys", "",
+        std::bind(&EmulatorWindow::DisplayHotKeysConfig, this));
+    controller_hotkeys_item_ = controller_hotkeys.get();
+    emulation_menu->AddChild(std::move(controller_hotkeys));
+
+    auto show_xmp = MenuItem::Create(
+        MenuItem::Type::kString, "&Show XMP Menu", "",
+        std::bind(&EmulatorWindow::ToggleXMPConfigDialog, this));
+    xmp_item_ = show_xmp.get();
+    emulation_menu->AddChild(std::move(show_xmp));
   }
-  main_menu->AddChild(std::move(config_menu));
+  main_menu->AddChild(std::move(emulation_menu));
 
   // Debug menu (CPU + GPU moved here).
   auto debug_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Debug");
@@ -1099,60 +1098,79 @@ bool EmulatorWindow::Initialize() {
   debug_menu->AddChild(std::move(gpu_menu));
   main_menu->AddChild(std::move(debug_menu));
 
-  // Display menu.
-  auto display_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Display");
+  // Settings menu: host-side presentation preferences.
+  auto settings_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Settings");
   {
-    display_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Post-processing settings", "F6",
-        std::bind(&EmulatorWindow::ToggleDisplayConfigDialog, this)));
-  }
-  display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-  {
-    // No checkmarks in ui::MenuItem: the active theme is the cvars::ui_theme
-    // value (also editable in the config editor).
+    // The active theme is a radio group mirroring cvars::ui_theme (also
+    // editable in the config editor). The items stay contiguous and
+    // separator-free so every backend treats them as one exclusive group.
     auto theme_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Theme");
-    theme_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Follow &system",
-        std::bind(&EmulatorWindow::SetUiTheme, this, "system")));
-    theme_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Light",
-        std::bind(&EmulatorWindow::SetUiTheme, this, "light")));
-    theme_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "&Dark",
-                         std::bind(&EmulatorWindow::SetUiTheme, this, "dark")));
-    display_menu->AddChild(std::move(theme_menu));
+    for (size_t i = 0; i < kThemeValues.size(); ++i) {
+      auto theme_item =
+          MenuItem::Create(MenuItem::Type::kRadio, kThemeLabels[i], "",
+                           std::bind(&EmulatorWindow::SetUiTheme, this,
+                                     std::string(kThemeValues[i])));
+      theme_items_[i] = theme_item.get();
+      theme_menu->AddChild(std::move(theme_item));
+    }
+    // Seed the initial state before the tree reaches a Window, so the first
+    // menu the backend builds already shows the right dot.
+    UpdateThemeMenuItems();
+    settings_menu->AddChild(std::move(theme_menu));
   }
-  display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+  settings_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
   {
-    display_menu->AddChild(
+    auto fullscreen =
         MenuItem::Create(MenuItem::Type::kString, "&Fullscreen", "F11",
-                         std::bind(&EmulatorWindow::ToggleFullscreen, this)));
-    display_menu->AddChild(
+                         std::bind(&EmulatorWindow::ToggleFullscreen, this));
+    fullscreen_item_ = fullscreen.get();
+    settings_menu->AddChild(std::move(fullscreen));
+  }
+  main_menu->AddChild(std::move(settings_menu));
+
+  // Tools menu: one-off host actions.
+  auto tools_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Tools");
+  {
+    auto screenshot =
         MenuItem::Create(MenuItem::Type::kString, "&Take Screenshot", "F12",
-                         std::bind(&EmulatorWindow::TakeScreenshot, this)));
-  }
-  main_menu->AddChild(std::move(display_menu));
+                         std::bind(&EmulatorWindow::TakeScreenshot, this));
+    screenshot_item_ = screenshot.get();
+    tools_menu->AddChild(std::move(screenshot));
+    tools_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
 
-  // HID menu.
-  auto hid_menu = MenuItem::Create(MenuItem::Type::kPopup, "&HID");
-  {
-    hid_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Toggle controller vibration", "",
-        std::bind(&EmulatorWindow::ToggleControllerVibration, this)));
-    hid_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Display controller hotkeys", "",
-        std::bind(&EmulatorWindow::DisplayHotKeysConfig, this)));
+    // Content menu.
+    auto content_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Content");
+    auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
+    {
+      content_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Install Content",
+                           std::bind(&EmulatorWindow::InstallContent, this)));
+      content_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Extract Content",
+          std::bind(&EmulatorWindow::ExtractContent, this, "")));
+      zar_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Create",
+                           std::bind(&EmulatorWindow::CreateZarchive, this)));
+      zar_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Extract",
+                           std::bind(&EmulatorWindow::ExtractZarchive, this)));
+      content_menu->AddChild(std::move(zar_menu));
+      content_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Show content directory...",
+          std::bind(&EmulatorWindow::ShowContentDirectory, this)));
+    }
+    tools_menu->AddChild(std::move(content_menu));
+    tools_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+    {
+      tools_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Refresh game &compatibility...",
+          std::bind(&EmulatorWindow::RefreshCompatData, this)));
+      tools_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Update game &patches...",
+          std::bind(&EmulatorWindow::UpdateGamePatches, this)));
+    }
   }
-  main_menu->AddChild(std::move(hid_menu));
-
-  // XMP menu
-  auto xmp_menu = MenuItem::Create(MenuItem::Type::kPopup, "&XMP");
-  {
-    xmp_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Show XMP Menu", "",
-        std::bind(&EmulatorWindow::ToggleXMPConfigDialog, this)));
-  }
-  main_menu->AddChild(std::move(xmp_menu));
+  main_menu->AddChild(std::move(tools_menu));
 
   // Help menu.
   auto help_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Help");
@@ -1160,13 +1178,6 @@ bool EmulatorWindow::Initialize() {
     help_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "FA&Q...", "F1",
                          std::bind(&EmulatorWindow::ShowFAQ, this)));
-    help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-    help_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Refresh game &compatibility...",
-        std::bind(&EmulatorWindow::RefreshCompatData, this)));
-    help_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Update game &patches...",
-                         std::bind(&EmulatorWindow::UpdateGamePatches, this)));
     help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     help_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Build commit on GitHub...", "F2",
@@ -1185,6 +1196,10 @@ bool EmulatorWindow::Initialize() {
   main_menu->AddChild(std::move(help_menu));
 
   window_->SetMainMenu(std::move(main_menu));
+
+  // No title is running yet, so settle every title-dependent item now rather
+  // than waiting for the first open/close to correct the first render.
+  UpdateTitleDependentMenuItems();
 
   window_->SetMainMenuEnabled(false);
 
@@ -1724,7 +1739,34 @@ void EmulatorWindow::UpdateTitleDependentMenuItems() {
   if (config_editor_item_) {
     config_editor_item_->SetEnabled(!title_open);
   }
+  // These all act on the running guest: there is no frame to post-process, no
+  // controller to describe and no XMP overlay to configure while only the
+  // library is up, so they are offered solely with a title running.
+  if (post_processing_item_) {
+    post_processing_item_->SetEnabled(title_open);
+  }
+  if (controller_hotkeys_item_) {
+    controller_hotkeys_item_->SetEnabled(title_open);
+  }
+  if (xmp_item_) {
+    xmp_item_->SetEnabled(title_open);
+  }
+  // Fullscreen and Take Screenshot likewise act on the game view.
+  if (fullscreen_item_) {
+    fullscreen_item_->SetEnabled(title_open);
+  }
+  if (screenshot_item_) {
+    screenshot_item_->SetEnabled(title_open);
+  }
   window_->CompleteMainMenuItemsUpdate();
+}
+
+void EmulatorWindow::UpdateThemeMenuItems() {
+  for (size_t i = 0; i < theme_items_.size(); ++i) {
+    if (theme_items_[i]) {
+      theme_items_[i]->SetChecked(cvars::ui_theme == kThemeValues[i]);
+    }
+  }
 }
 
 void EmulatorWindow::ShowLibrary() {
@@ -1741,7 +1783,11 @@ void EmulatorWindow::ShowGame() {
 
 void EmulatorWindow::ShowProfileMenu() {
 #ifdef XENIA_HAS_WX_UI
-  static_cast<wx_ui::WxWindow*>(window_.get())->OnProfileMenu();
+  // The wx backend owns the menu bar's Profile submenu and refills it on every
+  // open, replacing this placeholder child when the menu bar is built - so the
+  // callback is only ever reached if that ever stops being true. Refreshing it
+  // is the safe answer either way.
+  static_cast<wx_ui::WxWindow*>(window_.get())->RefreshProfileMenu();
 #else
   ToggleProfilesConfigDialog();
 #endif
@@ -1754,6 +1800,10 @@ void EmulatorWindow::SetUiTheme(const std::string& theme) {
     cvars::ui_theme = theme;
   }
   config::SaveConfig();
+  // Move the radio dot onto the theme that was just applied. Done before the
+  // early return below so it lands on both the live and restart paths.
+  UpdateThemeMenuItems();
+  window_->CompleteMainMenuItemsUpdate();
 #ifdef XENIA_HAS_WX_UI
   auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
   if (wx_window && wx_window->RefreshTheme()) {

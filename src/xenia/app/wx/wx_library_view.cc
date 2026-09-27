@@ -64,7 +64,6 @@ enum : int {
   kIdMode,
   kIdAdd,
   kIdScan,
-  kIdProfile,
   kIdMenuBoot,
   kIdMenuDisc,
   kIdMenuFolder,
@@ -135,8 +134,6 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   bar->Add(scan, 0, wxRIGHT, FromDIP(8));
   bar->Add(mode, 0, wxRIGHT, FromDIP(8));
   bar->Add(search_, 1, wxEXPAND);
-  profile_button_ = new wxButton(this, kIdProfile, "Profile");
-  bar->Add(profile_button_, 0, wxLEFT, FromDIP(8));
 
   book_ = new wxSimplebook(this, wxID_ANY);
   table_ = new wxListCtrl(book_, wxID_ANY, wxDefaultPosition, wxDefaultSize,
@@ -167,7 +164,6 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_CHOICE, &WxLibraryView::OnMode, this, kIdMode);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
   Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
-  Bind(wxEVT_BUTTON, &WxLibraryView::OnProfile, this, kIdProfile);
   Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuEditInfo);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
@@ -598,12 +594,6 @@ void WxLibraryView::OnAdd(wxCommandEvent&) {
 void WxLibraryView::OnScan(wxCommandEvent&) {
   if (delegate_) {
     delegate_->OnScanFolder();
-  }
-}
-
-void WxLibraryView::OnProfile(wxCommandEvent&) {
-  if (delegate_) {
-    delegate_->OnProfileMenu();
   }
 }
 

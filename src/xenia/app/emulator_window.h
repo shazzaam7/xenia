@@ -10,6 +10,7 @@
 #ifndef XENIA_APP_EMULATOR_WINDOW_H_
 #define XENIA_APP_EMULATOR_WINDOW_H_
 
+#include <array>
 #include <memory>
 #include <string>
 
@@ -299,8 +300,12 @@ class EmulatorWindow {
   void LibraryBoot(size_t index, int disc_number,
                    const std::filesystem::path& path);
   // Applies the title-open state to the menu items that depend on it (Stop,
-  // and Open config editor, which is off-limits while a title is running).
+  // and Configuration, which is off-limits while a title is running, plus the
+  // guest-facing entries in Emulation, Settings and Tools).
   void UpdateTitleDependentMenuItems();
+  // Marks the Settings > Theme entry matching cvars::ui_theme and clears the
+  // other two, so the radio group always mirrors the active theme.
+  void UpdateThemeMenuItems();
   void InstallContent();
   void ExtractZarchive();
   void CreateZarchive();
@@ -389,6 +394,14 @@ class EmulatorWindow {
   // Game library state (wx backend only; the window owns the entries).
   ui::MenuItem* stop_item_ = nullptr;
   ui::MenuItem* config_editor_item_ = nullptr;
+  // These act on the running guest, so they are only offered with a title up.
+  ui::MenuItem* post_processing_item_ = nullptr;
+  ui::MenuItem* controller_hotkeys_item_ = nullptr;
+  ui::MenuItem* xmp_item_ = nullptr;
+  ui::MenuItem* fullscreen_item_ = nullptr;
+  ui::MenuItem* screenshot_item_ = nullptr;
+  // The Settings > Theme radio group, indexed in step with kThemeValues.
+  std::array<ui::MenuItem*, 3> theme_items_{};
   bool has_library_boot_ = false;
   size_t library_boot_index_ = 0;
   int library_boot_disc_ = 1;

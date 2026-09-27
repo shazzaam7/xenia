@@ -394,19 +394,50 @@ void WxWindow::RebuildMenuBar() {
 }
 
 wxMenu* WxWindow::BuildPopupMenu(WxMenuItem* popup_item) {
+  // Appends the accelerator so the shortcut a MenuItem advertises is actually
+  // visible, the way the Win32 and GTK backends do. Rendered inline in
+  // brackets - "Fullscreen (F11)" - rather than in a column.
+  //
+  // Deliberately not the wx-conventional tab: wx parses whatever follows a tab
+  // as a real accelerator (wxMenu::UpdateAccel -> wxAcceleratorEntry::Create)
+  // and registers it, which would both spam the log for the spellings wx cannot
+  // decode ("Numpad *", "Pause/Break") and put a second, wx-side accelerator
+  // table in front of the one Xenia already dispatches from
+  // EmulatorWindow::OnKeyDown. Keeping this cosmetic means every hotkey behaves
+  // exactly as it did before it was displayed.
+  const auto label_with_hotkey = [](ui::MenuItem* item) {
+    const std::string& hotkey = item->hotkey();
+    if (hotkey.empty()) {
+      return WxLabel(item->text());
+    }
+    return WxLabel(item->text() + " (" + hotkey + ")");
+  };
+
   auto menu = new wxMenu();
   for (auto child : popup_item->wx_children()) {
     switch (child->type()) {
       case ui::MenuItem::Type::kPopup: {
         wxMenu* submenu = BuildPopupMenu(child);
-        menu->AppendSubMenu(submenu, WxLabel(child->text()));
+        menu->AppendSubMenu(submenu, label_with_hotkey(child));
         break;
       }
       case ui::MenuItem::Type::kSeparator:
         menu->AppendSeparator();
         break;
+      case ui::MenuItem::Type::kRadio: {
+        // The items of one radio group must be contiguous and separator-free
+        // for wx to treat them as exclusive.
+        wxMenuItem* item =
+            menu->AppendRadioItem(wxID_ANY, label_with_hotkey(child));
+        item->Check(child->checked());
+        if (!child->enabled()) {
+          menu->Enable(item->GetId(), false);
+        }
+        menu_items_by_id_[item->GetId()] = child;
+        break;
+      }
       case ui::MenuItem::Type::kString: {
-        wxMenuItem* item = menu->Append(wxID_ANY, WxLabel(child->text()));
+        wxMenuItem* item = menu->Append(wxID_ANY, label_with_hotkey(child));
         if (!child->enabled()) {
           menu->Enable(item->GetId(), false);
         }
@@ -1278,15 +1309,6 @@ void WxWindow::OnScanFolder() {
     return;
   }
   ScanLibraryFolder(WxToPath(dialog.GetPath()));
-}
-
-void WxWindow::OnProfileMenu() {
-  if (!library_view_) {
-    return;
-  }
-  wxMenu menu;
-  FillProfileMenu(&menu, library_view_);
-  library_view_->PopupMenu(&menu);
 }
 
 void WxWindow::RefreshProfileMenu() {
