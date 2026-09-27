@@ -46,6 +46,7 @@ void MenuItem::AddChild(std::unique_ptr<MenuItem> child_item) {
 
 void MenuItem::AddChild(MenuItemPtr child_item) {
   auto child_item_ptr = child_item.get();
+  child_item_ptr->parent_item_ = this;
   children_.emplace_back(std::move(child_item));
   OnChildAdded(child_item_ptr);
 }
@@ -53,14 +54,27 @@ void MenuItem::AddChild(MenuItemPtr child_item) {
 void MenuItem::RemoveChild(MenuItem* child_item) {
   for (auto it = children_.begin(); it != children_.end(); ++it) {
     if (it->get() == child_item) {
-      children_.erase(it);
+      child_item->parent_item_ = nullptr;
       OnChildRemoved(child_item);
+      children_.erase(it);
       break;
     }
   }
 }
 
 MenuItem* MenuItem::child(size_t index) { return children_[index].get(); }
+
+int MenuItem::IndexInParent() const {
+  if (!parent_item_) {
+    return -1;
+  }
+  for (size_t i = 0; i < parent_item_->children_.size(); ++i) {
+    if (parent_item_->children_[i].get() == this) {
+      return int(i);
+    }
+  }
+  return -1;
+}
 
 void MenuItem::OnSelected() {
   if (callback_) {

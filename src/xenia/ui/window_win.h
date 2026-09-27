@@ -172,6 +172,7 @@ class Win32MenuItem : public MenuItem {
  protected:
   void OnChildAdded(MenuItem* child_item) override;
   void OnChildRemoved(MenuItem* child_item) override;
+  void OnCheckedChanged() override;
 
  private:
   HMENU handle_ = nullptr;

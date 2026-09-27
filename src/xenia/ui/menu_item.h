@@ -31,6 +31,7 @@ class MenuItem {
     kSeparator,
     kNormal,  // Root menu
     kString,  // Menu is just a string
+    kRadio,   // Checkable leaf item, drawn as a radio dot
   };
 
   static std::unique_ptr<MenuItem> Create(Type type);
@@ -47,6 +48,22 @@ class MenuItem {
   Type type() { return type_; }
   const std::string& text() { return text_; }
   const std::string& hotkey() { return hotkey_; }
+  bool checked() const { return checked_; }
+
+  // Checked state of a kRadio item. The base owns the value so checked() is
+  // always truthful on every backend; OnCheckedChanged pushes it to whatever
+  // native widget exists. Setting the value it already has does nothing, so
+  // re-selecting the active item in a radio group is free.
+  //
+  // Like SetEnabled, this is not reflected immediately once the menu is
+  // attached to a Window - call Window::CompleteMainMenuItemsUpdate after
+  // finishing a batch of changes.
+  void SetChecked(bool checked) {
+    if (checked_ != checked) {
+      checked_ = checked;
+      OnCheckedChanged();
+    }
+  }
 
   // If the menu is currently attached to a Window, changes to it (such as the
   // elements and the enabled / disabled state) may be not reflected
@@ -67,6 +84,12 @@ class MenuItem {
 
   virtual void OnChildAdded(MenuItem* child_item) {}
   virtual void OnChildRemoved(MenuItem* child_item) {}
+  virtual void OnCheckedChanged() {}
+
+  // Position of this item within its parent's children, or -1 when it has not
+  // been attached to a parent yet. Backends that need to address this item
+  // within its parent's native widget (Win32 check marks, for one) use this.
+  int IndexInParent() const;
 
   // This MenuItem may be destroyed as a result of the callback, don't do
   // anything with it after the call.
@@ -77,6 +100,7 @@ class MenuItem {
   std::vector<MenuItemPtr> children_;
   std::string text_;
   std::string hotkey_;
+  bool checked_ = false;
 
  private:
   std::function<void()> callback_;

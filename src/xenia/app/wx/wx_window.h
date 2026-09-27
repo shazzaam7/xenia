@@ -1,6 +1,7 @@
 #ifndef XENIA_APP_WX_WINDOW_H_
 #define XENIA_APP_WX_WINDOW_H_
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -120,13 +121,18 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void ScanInstalledGames();
   void RemoveLibraryEntry(size_t index);
 
+  // (Re)fills the menu bar's Profile submenu with the per-account profile
+  // items plus Create. Normally driven by OnMenuOpen every time the submenu is
+  // opened; exposed so the Profile menu item can refresh it directly on the
+  // backends where the static MenuItem tree carries a placeholder child.
+  void RefreshProfileMenu();
+
   // WxLibraryView::Delegate (all on the UI thread).
   void OnBootGame(size_t index, int disc_number) override;
   void OnRemoveGame(size_t index) override;
   void OnShowInFolder(size_t index) override;
   void OnAddGame() override;
   void OnScanFolder() override;
-  void OnProfileMenu() override;
   void OnViewContent(size_t index) override;
   void OnGameConfig(size_t index) override;
   void OnPatches(size_t index) override;
@@ -246,6 +252,13 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // ApplyCompatMap/FillMissingCompat.
   CompatMap compat_;
   bool compat_fetching_ = false;
+  // Lifetime token for background callbacks (compat fetch): captured by value
+  // by detached worker threads, cleared on CloseWindowNow/destruction (both
+  // run on the UI thread, serialized with CallAfter handlers). Workers never
+  // touch members directly; the UI-thread continuation checks the token first
+  // so closing the window mid-fetch cannot use freed memory.
+  std::shared_ptr<std::atomic<bool>> alive_ =
+      std::make_shared<std::atomic<bool>>(true);
   // Writes a freshly fetched map into all entries (clearing ratings for
   // titles with no report), persists, and refreshes the view.
   void ApplyCompatMap(const CompatMap& map);
@@ -259,10 +272,9 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // the static MenuItem tree). Null when the menu bar has no Profile entry.
   wxMenu* profile_menu_ = nullptr;
   bool menu_open_bound_ = false;
-  // (Re)fills a menu with the per-account profile items + Create. Shared by
-  // the menu bar entry and the toolbar popup.
+  // (Re)fills a menu with the per-account profile items + Create, for the menu
+  // bar entry.
   void FillProfileMenu(wxMenu* menu, wxWindow* parent);
-  void RefreshProfileMenu();
   void OnMenuOpen(wxMenuEvent& event);
 };
 
