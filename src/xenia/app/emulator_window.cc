@@ -218,6 +218,14 @@ using namespace xe::gpu;
 constexpr std::string_view kRecentlyPlayedTitlesFilename = "recent.toml";
 constexpr std::string_view kBaseTitle = "Xenia-canary";
 
+// Settings > Theme radio group, in menu order. The values are the
+// cvars::ui_theme choices; UpdateThemeMenuItems keeps the dot on the active
+// one.
+constexpr std::array<std::string_view, 3> kThemeValues = {"system", "light",
+                                                          "dark"};
+constexpr std::array<const char*, 3> kThemeLabels = {"Follow &system", "&Light",
+                                                     "&Dark"};
+
 EmulatorWindow::EmulatorWindow(Emulator* emulator,
                                ui::WindowedAppContext& app_context,
                                uint32_t width, uint32_t height)
@@ -270,6 +278,7 @@ std::unique_ptr<EmulatorWindow> EmulatorWindow::Create(
 }
 
 EmulatorWindow::~EmulatorWindow() {
+  *alive_ = false;
   // Notify the ImGui drawer that the immediate drawer is being destroyed.
   ShutdownGraphicsSystemPresenterPainting();
 }
@@ -853,11 +862,15 @@ void EmulatorWindow::ContentInstallDialog::OnDraw(ImGuiIO& io) {
                   XContentTypeMap.at(entry.content_type_).c_str());
     }
 
+    // Single atomic load: the worker stores result/message before the
+    // terminal state, so observing the state first keeps the reads below
+    // safe without a lock.
+    const auto install_state = entry.installation_state_.load();
     std::string result = fmt::format(
         "Status: {}", xe::Emulator::installStateStringName[static_cast<uint8_t>(
-                          entry.installation_state_)]);
+                          install_state)]);
 
-    if (entry.installation_state_ == xe::Emulator::InstallState::failed) {
+    if (install_state == xe::Emulator::InstallState::failed) {
       result += fmt::format(" - {} ({:08X})",
                             entry.installation_error_message_.c_str(),
                             entry.installation_result_);
@@ -870,9 +883,9 @@ void EmulatorWindow::ContentInstallDialog::OnDraw(ImGuiIO& io) {
       ImGui::ProgressBar(static_cast<float>(entry.currently_installed_size_) /
                          entry.content_size_);
 
-      if (entry.installation_state_ == Emulator::InstallState::installing ||
-          entry.installation_state_ == Emulator::InstallState::pending ||
-          entry.installation_state_ == Emulator::InstallState::preparing) {
+      if (install_state == Emulator::InstallState::installing ||
+          install_state == Emulator::InstallState::pending ||
+          install_state == Emulator::InstallState::preparing) {
         is_everything_installed = false;
       }
     } else {
@@ -1002,48 +1015,39 @@ bool EmulatorWindow::Initialize() {
   }
   main_menu->AddChild(std::move(profile_menu));
 
-  // Content Menu
-  auto content_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Content");
-  auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
+  // Emulation menu: configuring and inspecting the emulated machine rather
+  // than the host UI.
+  auto emulation_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Emulation");
   {
-    content_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Install Content",
-                         std::bind(&EmulatorWindow::InstallContent, this)));
-    content_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Extract Content",
-                         std::bind(&EmulatorWindow::ExtractContent, this, "")));
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Create",
-                         std::bind(&EmulatorWindow::CreateZarchive, this)));
-    zar_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Extract",
-                         std::bind(&EmulatorWindow::ExtractZarchive, this)));
-    content_menu->AddChild(std::move(zar_menu));
-    content_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Show content directory...",
-        std::bind(&EmulatorWindow::ShowContentDirectory, this)));
-  }
-  main_menu->AddChild(std::move(content_menu));
-
-  // Console menu
-  auto console_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Console");
-  {
-    console_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Open console settings", "",
+    emulation_menu->AddChild(MenuItem::Create(
+        MenuItem::Type::kString, "&Console Settings", "",
         std::bind(&EmulatorWindow::ShowConsoleSettingsDialog, this)));
-  }
-  main_menu->AddChild(std::move(console_menu));
 
-  // Config menu
-  auto config_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Config");
-  {
     auto open_config = MenuItem::Create(
-        MenuItem::Type::kString, "&Open config editor", "",
+        MenuItem::Type::kString, "Con&figuration", "",
         std::bind(&EmulatorWindow::ShowConfigEditorDialog, this));
     config_editor_item_ = open_config.get();
-    config_menu->AddChild(std::move(open_config));
+    emulation_menu->AddChild(std::move(open_config));
+
+    auto post_processing = MenuItem::Create(
+        MenuItem::Type::kString, "&Post-processing settings", "F6",
+        std::bind(&EmulatorWindow::ToggleDisplayConfigDialog, this));
+    post_processing_item_ = post_processing.get();
+    emulation_menu->AddChild(std::move(post_processing));
+
+    auto controller_hotkeys = MenuItem::Create(
+        MenuItem::Type::kString, "&Display controller hotkeys", "",
+        std::bind(&EmulatorWindow::DisplayHotKeysConfig, this));
+    controller_hotkeys_item_ = controller_hotkeys.get();
+    emulation_menu->AddChild(std::move(controller_hotkeys));
+
+    auto show_xmp = MenuItem::Create(
+        MenuItem::Type::kString, "&Show XMP Menu", "",
+        std::bind(&EmulatorWindow::ToggleXMPConfigDialog, this));
+    xmp_item_ = show_xmp.get();
+    emulation_menu->AddChild(std::move(show_xmp));
   }
-  main_menu->AddChild(std::move(config_menu));
+  main_menu->AddChild(std::move(emulation_menu));
 
   // Debug menu (CPU + GPU moved here).
   auto debug_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Debug");
@@ -1099,60 +1103,79 @@ bool EmulatorWindow::Initialize() {
   debug_menu->AddChild(std::move(gpu_menu));
   main_menu->AddChild(std::move(debug_menu));
 
-  // Display menu.
-  auto display_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Display");
+  // Settings menu: host-side presentation preferences.
+  auto settings_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Settings");
   {
-    display_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Post-processing settings", "F6",
-        std::bind(&EmulatorWindow::ToggleDisplayConfigDialog, this)));
-  }
-  display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-  {
-    // No checkmarks in ui::MenuItem: the active theme is the cvars::ui_theme
-    // value (also editable in the config editor).
+    // The active theme is a radio group mirroring cvars::ui_theme (also
+    // editable in the config editor). The items stay contiguous and
+    // separator-free so every backend treats them as one exclusive group.
     auto theme_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Theme");
-    theme_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Follow &system",
-        std::bind(&EmulatorWindow::SetUiTheme, this, "system")));
-    theme_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Light",
-        std::bind(&EmulatorWindow::SetUiTheme, this, "light")));
-    theme_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "&Dark",
-                         std::bind(&EmulatorWindow::SetUiTheme, this, "dark")));
-    display_menu->AddChild(std::move(theme_menu));
+    for (size_t i = 0; i < kThemeValues.size(); ++i) {
+      auto theme_item =
+          MenuItem::Create(MenuItem::Type::kRadio, kThemeLabels[i], "",
+                           std::bind(&EmulatorWindow::SetUiTheme, this,
+                                     std::string(kThemeValues[i])));
+      theme_items_[i] = theme_item.get();
+      theme_menu->AddChild(std::move(theme_item));
+    }
+    // Seed the initial state before the tree reaches a Window, so the first
+    // menu the backend builds already shows the right dot.
+    UpdateThemeMenuItems();
+    settings_menu->AddChild(std::move(theme_menu));
   }
-  display_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+  settings_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
   {
-    display_menu->AddChild(
+    auto fullscreen =
         MenuItem::Create(MenuItem::Type::kString, "&Fullscreen", "F11",
-                         std::bind(&EmulatorWindow::ToggleFullscreen, this)));
-    display_menu->AddChild(
+                         std::bind(&EmulatorWindow::ToggleFullscreen, this));
+    fullscreen_item_ = fullscreen.get();
+    settings_menu->AddChild(std::move(fullscreen));
+  }
+  main_menu->AddChild(std::move(settings_menu));
+
+  // Tools menu: one-off host actions.
+  auto tools_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Tools");
+  {
+    auto screenshot =
         MenuItem::Create(MenuItem::Type::kString, "&Take Screenshot", "F12",
-                         std::bind(&EmulatorWindow::TakeScreenshot, this)));
-  }
-  main_menu->AddChild(std::move(display_menu));
+                         std::bind(&EmulatorWindow::TakeScreenshot, this));
+    screenshot_item_ = screenshot.get();
+    tools_menu->AddChild(std::move(screenshot));
+    tools_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
 
-  // HID menu.
-  auto hid_menu = MenuItem::Create(MenuItem::Type::kPopup, "&HID");
-  {
-    hid_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Toggle controller vibration", "",
-        std::bind(&EmulatorWindow::ToggleControllerVibration, this)));
-    hid_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Display controller hotkeys", "",
-        std::bind(&EmulatorWindow::DisplayHotKeysConfig, this)));
+    // Content menu.
+    auto content_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Content");
+    auto zar_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Zar Package");
+    {
+      content_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Install Content",
+                           std::bind(&EmulatorWindow::InstallContent, this)));
+      content_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Extract Content",
+          std::bind(&EmulatorWindow::ExtractContent, this, "")));
+      zar_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Create",
+                           std::bind(&EmulatorWindow::CreateZarchive, this)));
+      zar_menu->AddChild(
+          MenuItem::Create(MenuItem::Type::kString, "Extract",
+                           std::bind(&EmulatorWindow::ExtractZarchive, this)));
+      content_menu->AddChild(std::move(zar_menu));
+      content_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Show content directory...",
+          std::bind(&EmulatorWindow::ShowContentDirectory, this)));
+    }
+    tools_menu->AddChild(std::move(content_menu));
+    tools_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
+    {
+      tools_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Refresh game &compatibility...",
+          std::bind(&EmulatorWindow::RefreshCompatData, this)));
+      tools_menu->AddChild(MenuItem::Create(
+          MenuItem::Type::kString, "Update game &patches...",
+          std::bind(&EmulatorWindow::UpdateGamePatches, this)));
+    }
   }
-  main_menu->AddChild(std::move(hid_menu));
-
-  // XMP menu
-  auto xmp_menu = MenuItem::Create(MenuItem::Type::kPopup, "&XMP");
-  {
-    xmp_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "&Show XMP Menu", "",
-        std::bind(&EmulatorWindow::ToggleXMPConfigDialog, this)));
-  }
-  main_menu->AddChild(std::move(xmp_menu));
+  main_menu->AddChild(std::move(tools_menu));
 
   // Help menu.
   auto help_menu = MenuItem::Create(MenuItem::Type::kPopup, "&Help");
@@ -1160,13 +1183,6 @@ bool EmulatorWindow::Initialize() {
     help_menu->AddChild(
         MenuItem::Create(MenuItem::Type::kString, "FA&Q...", "F1",
                          std::bind(&EmulatorWindow::ShowFAQ, this)));
-    help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
-    help_menu->AddChild(MenuItem::Create(
-        MenuItem::Type::kString, "Refresh game &compatibility...",
-        std::bind(&EmulatorWindow::RefreshCompatData, this)));
-    help_menu->AddChild(
-        MenuItem::Create(MenuItem::Type::kString, "Update game &patches...",
-                         std::bind(&EmulatorWindow::UpdateGamePatches, this)));
     help_menu->AddChild(MenuItem::Create(MenuItem::Type::kSeparator));
     help_menu->AddChild(MenuItem::Create(
         MenuItem::Type::kString, "Build commit on GitHub...", "F2",
@@ -1185,6 +1201,10 @@ bool EmulatorWindow::Initialize() {
   main_menu->AddChild(std::move(help_menu));
 
   window_->SetMainMenu(std::move(main_menu));
+
+  // No title is running yet, so settle every title-dependent item now rather
+  // than waiting for the first open/close to correct the first render.
+  UpdateTitleDependentMenuItems();
 
   window_->SetMainMenuEnabled(false);
 
@@ -1591,10 +1611,17 @@ void EmulatorWindow::StopTitle() {
   window_->SetIcon(nullptr, 0);
   ClearDialogs();
   // ResetTitle terminates guest threads and tears down subsystems, so it must
-  // run off the UI thread.
-  std::thread([this]() {
-    emulator_->ResetTitle();
-    app_context_.CallInUIThread([this]() {
+  // run off the UI thread. The continuation is guarded by alive_: quitting
+  // mid-stop drops it instead of touching a dead window.
+  Emulator* stop_emulator = emulator_;
+  ui::WindowedAppContext* stop_context = &app_context_;
+  auto stop_alive = alive_;
+  std::thread([stop_alive, stop_emulator, stop_context, this]() {
+    stop_emulator->ResetTitle();
+    stop_context->CallInUIThread([stop_alive, this]() {
+      if (!*stop_alive) {
+        return;
+      }
       // Nothing is running any more, so the overrides that title loaded must
       // stop deciding the application's values: a per-title file is only meant
       // to apply to its own title, and the global config is what governs
@@ -1650,14 +1677,21 @@ bool EmulatorWindow::StopTitleFromGuestThread(
   // Detached non-guest thread: RelaunchTitle terminates all guest threads
   // (including this caller, which parks in KernelState::ExitToDashboard) and
   // performs the full Shutdown/Setup/Launch cycle under launch_mutex_.
+  // Continuations are guarded by alive_: quitting mid-relaunch drops them.
   Emulator* emulator = emulator_;
-  std::thread([this, emulator, host_path = std::move(host_path),
+  ui::WindowedAppContext* relaunch_context = &app_context_;
+  auto relaunch_alive = alive_;
+  std::thread([this, relaunch_alive, emulator, relaunch_context,
+               host_path = std::move(host_path),
                launch_path = std::move(launch_path), launch_flags,
                launch_data = std::move(launch_data)]() mutable {
     if (host_path.empty()) {
       // Plain dashboard exit: reset to idle and return to the library.
       X_STATUS reset_result = emulator->ResetTitle();
-      app_context_.CallInUIThread([this, reset_result]() {
+      relaunch_context->CallInUIThread([this, relaunch_alive, reset_result]() {
+        if (!*relaunch_alive) {
+          return;
+        }
         if (XFAILED(reset_result)) {
           xe::ui::ImGuiDialog::ShowMessageBox(
               imgui_drawer_.get(), "Title Stop Failed!",
@@ -1694,9 +1728,13 @@ bool EmulatorWindow::StopTitleFromGuestThread(
     // whether a title is open now.
     X_STATUS result =
         emulator->is_title_open() ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
-    app_context_.CallInUIThread([this, result, target, abs_path]() mutable {
-      FinishTitleLaunch(target, abs_path, result);
-    });
+    relaunch_context->CallInUIThread(
+        [this, relaunch_alive, result, target, abs_path]() mutable {
+          if (!*relaunch_alive) {
+            return;
+          }
+          FinishTitleLaunch(target, abs_path, result);
+        });
   }).detach();
   return true;
 }
@@ -1724,7 +1762,34 @@ void EmulatorWindow::UpdateTitleDependentMenuItems() {
   if (config_editor_item_) {
     config_editor_item_->SetEnabled(!title_open);
   }
+  // These all act on the running guest: there is no frame to post-process, no
+  // controller to describe and no XMP overlay to configure while only the
+  // library is up, so they are offered solely with a title running.
+  if (post_processing_item_) {
+    post_processing_item_->SetEnabled(title_open);
+  }
+  if (controller_hotkeys_item_) {
+    controller_hotkeys_item_->SetEnabled(title_open);
+  }
+  if (xmp_item_) {
+    xmp_item_->SetEnabled(title_open);
+  }
+  // Fullscreen and Take Screenshot likewise act on the game view.
+  if (fullscreen_item_) {
+    fullscreen_item_->SetEnabled(title_open);
+  }
+  if (screenshot_item_) {
+    screenshot_item_->SetEnabled(title_open);
+  }
   window_->CompleteMainMenuItemsUpdate();
+}
+
+void EmulatorWindow::UpdateThemeMenuItems() {
+  for (size_t i = 0; i < theme_items_.size(); ++i) {
+    if (theme_items_[i]) {
+      theme_items_[i]->SetChecked(cvars::ui_theme == kThemeValues[i]);
+    }
+  }
 }
 
 void EmulatorWindow::ShowLibrary() {
@@ -1741,7 +1806,11 @@ void EmulatorWindow::ShowGame() {
 
 void EmulatorWindow::ShowProfileMenu() {
 #ifdef XENIA_HAS_WX_UI
-  static_cast<wx_ui::WxWindow*>(window_.get())->OnProfileMenu();
+  // The wx backend owns the menu bar's Profile submenu and refills it on every
+  // open, replacing this placeholder child when the menu bar is built - so the
+  // callback is only ever reached if that ever stops being true. Refreshing it
+  // is the safe answer either way.
+  static_cast<wx_ui::WxWindow*>(window_.get())->RefreshProfileMenu();
 #else
   ToggleProfilesConfigDialog();
 #endif
@@ -1754,6 +1823,10 @@ void EmulatorWindow::SetUiTheme(const std::string& theme) {
     cvars::ui_theme = theme;
   }
   config::SaveConfig();
+  // Move the radio dot onto the theme that was just applied. Done before the
+  // early return below so it lands on both the live and restart paths.
+  UpdateThemeMenuItems();
+  window_->CompleteMainMenuItemsUpdate();
 #ifdef XENIA_HAS_WX_UI
   auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
   if (wx_window && wx_window->RefreshTheme()) {
@@ -1821,13 +1894,14 @@ bool IsPathInside(const std::filesystem::path& path,
 
 }  // namespace
 
-void EmulatorWindow::AddInstalledContentToLibrary(
-    const std::shared_ptr<std::vector<Emulator::ContentInstallEntry>>& entries,
+std::vector<std::filesystem::path> EmulatorWindow::ScanInstalledContent(
+    Emulator* emulator,
+    const std::vector<Emulator::ContentInstallEntry>& entries,
     bool only_inside_content) {
   std::vector<std::filesystem::path> scan;
-  const auto content_root = emulator_->content_root();
-  for (auto& entry : *entries) {
-    if (entry.installation_state_ != Emulator::InstallState::installed) {
+  const auto content_root = emulator->content_root();
+  for (auto& entry : entries) {
+    if (entry.installation_state_.load() != Emulator::InstallState::installed) {
       continue;
     }
     if (!only_inside_content &&
@@ -1865,19 +1939,21 @@ void EmulatorWindow::AddInstalledContentToLibrary(
     }
     scan.push_back(final_path);
   }
-  if (scan.empty()) {
+  return scan;
+}
+
+void EmulatorWindow::ImportScannedPaths(
+    const std::vector<std::filesystem::path>& scan) {
+#ifdef XENIA_HAS_WX_UI
+  auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+  if (!wx_window->IsLibraryAttached()) {
     return;
   }
   // Same full scan as manual Add/Scan (metadata + icon search + artwork).
-  app_context_.CallInUIThread([this, scan]() {
-#ifdef XENIA_HAS_WX_UI
-    auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
-    if (!wx_window->IsLibraryAttached()) {
-      return;
-    }
-    wx_window->ImportLibraryPaths(scan);
+  wx_window->ImportLibraryPaths(scan);
+#else
+  (void)scan;
 #endif
-  });
 }
 
 void EmulatorWindow::InstallContent() {
@@ -1911,12 +1987,27 @@ void EmulatorWindow::InstallContent() {
     emulator_->ProcessContentPackageHeader(entry.path_, entry);
   }
 
-  auto installationThread = std::thread([this, content_installation_status] {
-    for (auto& entry : *content_installation_status) {
-      emulator_->InstallContentPackage(entry.path_, entry);
-    }
-    AddInstalledContentToLibrary(content_installation_status, false);
-  });
+  Emulator* install_emulator = emulator_;
+  ui::WindowedAppContext* install_context = &app_context_;
+  auto install_alive = alive_;
+  auto installationThread =
+      std::thread([install_alive, install_emulator, install_context,
+                   content_installation_status, this] {
+        for (auto& entry : *content_installation_status) {
+          install_emulator->InstallContentPackage(entry.path_, entry);
+        }
+        auto scan = ScanInstalledContent(install_emulator,
+                                         *content_installation_status, false);
+        if (scan.empty() || !*install_alive) {
+          return;
+        }
+        install_context->CallInUIThread([install_alive, this, scan]() {
+          if (!*install_alive) {
+            return;
+          }
+          ImportScannedPaths(scan);
+        });
+      });
   installationThread.detach();
 
 #ifdef XENIA_HAS_WX_UI
@@ -1984,12 +2075,27 @@ void EmulatorWindow::ExtractContent(const std::filesystem::path file) {
     entry.header_installation_path_ = "";
   }
 
-  auto installationThread = std::thread([this, content_installation_status] {
-    for (auto& entry : *content_installation_status) {
-      emulator_->ExtractContentPackage(entry.path_, entry);
-    }
-    AddInstalledContentToLibrary(content_installation_status, true);
-  });
+  Emulator* extract_emulator = emulator_;
+  ui::WindowedAppContext* extract_context = &app_context_;
+  auto extract_alive = alive_;
+  auto installationThread =
+      std::thread([extract_alive, extract_emulator, extract_context,
+                   content_installation_status, this] {
+        for (auto& entry : *content_installation_status) {
+          extract_emulator->ExtractContentPackage(entry.path_, entry);
+        }
+        auto scan = ScanInstalledContent(extract_emulator,
+                                         *content_installation_status, true);
+        if (scan.empty() || !*extract_alive) {
+          return;
+        }
+        extract_context->CallInUIThread([extract_alive, this, scan]() {
+          if (!*extract_alive) {
+            return;
+          }
+          ImportScannedPaths(scan);
+        });
+      });
   installationThread.detach();
 
 #ifdef XENIA_HAS_WX_UI
@@ -2049,7 +2155,11 @@ void EmulatorWindow::ExtractZarchive() {
                                        string_util::trim(extract_overview), 0);
   });
 
-  auto run = [this, extract_dir, zarchive_files]() -> void {
+  Emulator* zar_emulator = emulator_;
+  ui::ImGuiDrawer* zar_drawer = imgui_drawer_.get();
+  auto zar_alive = alive_;
+  auto run = [zar_alive, zar_emulator, zar_drawer, extract_dir,
+              zarchive_files]() -> void {
     std::string summary = "";
 
     for (auto& zarchive_file_path : zarchive_files) {
@@ -2068,7 +2178,7 @@ void EmulatorWindow::ExtractZarchive() {
              zarchive_file_path.filename().string());
 
       auto result =
-          emulator_->ExtractZarchivePackage(abs_path, abs_extract_dir);
+          zar_emulator->ExtractZarchivePackage(abs_path, abs_extract_dir);
 
       if (result != X_STATUS_SUCCESS) {
         std::error_code ec;
@@ -2085,7 +2195,10 @@ void EmulatorWindow::ExtractZarchive() {
       }
     }
 
-    new xe::ui::HostNotificationWindow(imgui_drawer(), "Zar Extraction Summary",
+    if (!*zar_alive) {
+      return;
+    }
+    new xe::ui::HostNotificationWindow(zar_drawer, "Zar Extraction Summary",
                                        string_util::trim(summary), 0);
   };
 
@@ -2159,7 +2272,10 @@ void EmulatorWindow::CreateZarchive() {
                                        string_util::trim(create_overview), 0);
   });
 
-  auto run = [this, zarchive_files]() -> void {
+  Emulator* zar_emulator = emulator_;
+  ui::ImGuiDrawer* zar_drawer = imgui_drawer_.get();
+  auto zar_alive = alive_;
+  auto run = [zar_alive, zar_emulator, zar_drawer, zarchive_files]() -> void {
     std::string summary = "";
 
     for (auto const& [content_path, zarchive_file] : zarchive_files) {
@@ -2169,7 +2285,7 @@ void EmulatorWindow::CreateZarchive() {
       XELOGI("Creating zar package: {}\n", zarchive_file.filename().string());
 
       auto result =
-          emulator_->CreateZarchivePackage(abs_content_dir, zarchive_file);
+          zar_emulator->CreateZarchivePackage(abs_content_dir, zarchive_file);
 
       if (result != X_ERROR_SUCCESS) {
         std::error_code ec;
@@ -2185,7 +2301,10 @@ void EmulatorWindow::CreateZarchive() {
       }
     }
 
-    new xe::ui::HostNotificationWindow(imgui_drawer(), "Zar Creation Summary",
+    if (!*zar_alive) {
+      return;
+    }
+    new xe::ui::HostNotificationWindow(zar_drawer, "Zar Creation Summary",
                                        string_util::trim(summary), 0);
   };
 
@@ -3167,17 +3286,23 @@ xe::X_STATUS EmulatorWindow::RunTitle(
     // graphics-ready hook once the title systems exist (see
     // OnEmulatorInitialized), so there is nothing to attach here.
     Emulator* emulator = emulator_;
+    ui::WindowedAppContext* run_context = &app_context_;
+    auto run_alive = alive_;
     std::string host_path = xe::path_to_utf8(abs_path);
-    std::thread([this, emulator, host_path]() mutable {
+    std::thread([this, run_alive, emulator, run_context, host_path]() mutable {
       emulator->RelaunchTitle(host_path, /*launch_path=*/{},
                               /*launch_flags=*/0, /*launch_data=*/{});
       std::filesystem::path target = xe::to_path(host_path);
       auto abs = std::filesystem::absolute(target);
       X_STATUS result =
           emulator->is_title_open() ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
-      app_context_.CallInUIThread([this, result, target, abs]() mutable {
-        FinishTitleLaunch(target, abs, result);
-      });
+      run_context->CallInUIThread(
+          [this, run_alive, result, target, abs]() mutable {
+            if (!*run_alive) {
+              return;
+            }
+            FinishTitleLaunch(target, abs, result);
+          });
     }).detach();
     return X_STATUS_SUCCESS;
   }
@@ -3222,15 +3347,23 @@ xe::X_STATUS EmulatorWindow::RunTitle(
   ApplyContentVisibility();
   // LaunchPath blocks for seconds; run it off the UI thread so the
   // toolbar/render transition paints immediately. Post-launch work goes
-  // back to the UI thread.
+  // back to the UI thread, guarded by alive_ so quitting mid-launch drops
+  // it instead of touching a dead window.
   Emulator* emulator = emulator_;
-  std::thread([this, emulator, abs_path, path_to_file]() mutable {
+  ui::WindowedAppContext* launch_context = &app_context_;
+  auto launch_alive = alive_;
+  std::thread([this, launch_alive, emulator, launch_context, abs_path,
+               path_to_file]() mutable {
     auto result = emulator->LaunchPath(abs_path);
-    app_context_.CallInUIThread([this, result, abs_path, path_to_file]() {
-      target_pending_launch_ = false;
-      FinishTitleLaunch(path_to_file, abs_path, result);
-      ApplyContentVisibility();
-    });
+    launch_context->CallInUIThread(
+        [this, launch_alive, result, abs_path, path_to_file]() {
+          if (!*launch_alive) {
+            return;
+          }
+          target_pending_launch_ = false;
+          FinishTitleLaunch(path_to_file, abs_path, result);
+          ApplyContentVisibility();
+        });
   }).detach();
 
   return X_STATUS_SUCCESS;

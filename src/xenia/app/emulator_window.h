@@ -10,6 +10,7 @@
 #ifndef XENIA_APP_EMULATOR_WINDOW_H_
 #define XENIA_APP_EMULATOR_WINDOW_H_
 
+#include <array>
 #include <memory>
 #include <string>
 
@@ -299,18 +300,25 @@ class EmulatorWindow {
   void LibraryBoot(size_t index, int disc_number,
                    const std::filesystem::path& path);
   // Applies the title-open state to the menu items that depend on it (Stop,
-  // and Open config editor, which is off-limits while a title is running).
+  // and Configuration, which is off-limits while a title is running, plus the
+  // guest-facing entries in Emulation, Settings and Tools).
   void UpdateTitleDependentMenuItems();
+  // Marks the Settings > Theme entry matching cvars::ui_theme and clears the
+  // other two, so the radio group always mirrors the active theme.
+  void UpdateThemeMenuItems();
   void InstallContent();
   void ExtractZarchive();
   void CreateZarchive();
-  // Adds freshly installed/extracted titles to the game library. Runs on any
-  // thread; the library import itself hops to the UI thread. When
-  // only_inside_content is set, paths outside the content tree are skipped.
-  void AddInstalledContentToLibrary(
-      const std::shared_ptr<std::vector<Emulator::ContentInstallEntry>>&
-          entries,
+  // Scans freshly installed/extracted entries for launchable titles.
+  // Worker-safe: touches only the emulator and the passed entries, never
+  // this. Callers hop the result to the UI thread themselves.
+  static std::vector<std::filesystem::path> ScanInstalledContent(
+      Emulator* emulator,
+      const std::vector<Emulator::ContentInstallEntry>& entries,
       bool only_inside_content);
+  // Imports scan results into the wx library. Must run on the UI thread
+  // (callers guard with alive_ first).
+  void ImportScannedPaths(const std::vector<std::filesystem::path>& scan);
   void ShowContentDirectory();
   void CpuTimeScalarReset();
   void CpuTimeScalarSetHalf();
@@ -389,6 +397,14 @@ class EmulatorWindow {
   // Game library state (wx backend only; the window owns the entries).
   ui::MenuItem* stop_item_ = nullptr;
   ui::MenuItem* config_editor_item_ = nullptr;
+  // These act on the running guest, so they are only offered with a title up.
+  ui::MenuItem* post_processing_item_ = nullptr;
+  ui::MenuItem* controller_hotkeys_item_ = nullptr;
+  ui::MenuItem* xmp_item_ = nullptr;
+  ui::MenuItem* fullscreen_item_ = nullptr;
+  ui::MenuItem* screenshot_item_ = nullptr;
+  // The Settings > Theme radio group, indexed in step with kThemeValues.
+  std::array<ui::MenuItem*, 3> theme_items_{};
   bool has_library_boot_ = false;
   size_t library_boot_index_ = 0;
   int library_boot_disc_ = 1;
@@ -396,6 +412,14 @@ class EmulatorWindow {
   // LaunchPath). Guards against double-click re-entry and keeps the game
   // view visible until the launch settles. Always touched on the UI thread.
   bool target_pending_launch_ = false;
+  // Lifetime token for detached worker threads (launch/stop/relaunch,
+  // content installs): captured by value, cleared in the destructor (which
+  // runs on the UI thread, serialized with CallInUIThread continuations).
+  // Workers only touch the emulator (owned longer than this window) and
+  // captured values; UI-thread continuations bail when the token is dead so
+  // quit-during-launch can't use freed memory.
+  std::shared_ptr<std::atomic<bool>> alive_ =
+      std::make_shared<std::atomic<bool>>(true);
 };
 
 }  // namespace app

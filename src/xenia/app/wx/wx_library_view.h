@@ -44,7 +44,6 @@ class WxLibraryView : public wxPanel {
     virtual void OnShowInFolder(size_t index) = 0;
     virtual void OnAddGame() = 0;
     virtual void OnScanFolder() = 0;
-    virtual void OnProfileMenu() = 0;
     virtual void OnViewContent(size_t index) = 0;
     // Per-title config overrides (the game library's right-click entry).
     virtual void OnGameConfig(size_t index) = 0;
@@ -103,7 +102,6 @@ class WxLibraryView : public wxPanel {
   void OnContextGrid(wxListEvent& event);
   void OnAdd(wxCommandEvent& event);
   void OnScan(wxCommandEvent& event);
-  void OnProfile(wxCommandEvent& event);
   void OnMenu(wxCommandEvent& event);
 
   Delegate* delegate_;
@@ -120,7 +118,6 @@ class WxLibraryView : public wxPanel {
   wxListCtrl* grid_ = nullptr;
   wxSimplebook* book_ = nullptr;
   wxSearchCtrl* search_ = nullptr;
-  wxButton* profile_button_ = nullptr;
   wxStaticText* empty_hint_ = nullptr;
   wxImageList* small_images_ = nullptr;
   wxImageList* big_images_ = nullptr;

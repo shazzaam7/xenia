@@ -294,6 +294,7 @@ void WxWindow::RequestCloseImpl() {
 }
 
 void WxWindow::CloseWindowNow() {
+  *alive_ = false;
   WindowDestructionReceiver destruction_receiver(this);
   OnBeforeClose(destruction_receiver);
   if (destruction_receiver.IsWindowDestroyed()) {
@@ -394,19 +395,50 @@ void WxWindow::RebuildMenuBar() {
 }
 
 wxMenu* WxWindow::BuildPopupMenu(WxMenuItem* popup_item) {
+  // Appends the accelerator so the shortcut a MenuItem advertises is actually
+  // visible, the way the Win32 and GTK backends do. Rendered inline in
+  // brackets - "Fullscreen (F11)" - rather than in a column.
+  //
+  // Deliberately not the wx-conventional tab: wx parses whatever follows a tab
+  // as a real accelerator (wxMenu::UpdateAccel -> wxAcceleratorEntry::Create)
+  // and registers it, which would both spam the log for the spellings wx cannot
+  // decode ("Numpad *", "Pause/Break") and put a second, wx-side accelerator
+  // table in front of the one Xenia already dispatches from
+  // EmulatorWindow::OnKeyDown. Keeping this cosmetic means every hotkey behaves
+  // exactly as it did before it was displayed.
+  const auto label_with_hotkey = [](ui::MenuItem* item) {
+    const std::string& hotkey = item->hotkey();
+    if (hotkey.empty()) {
+      return WxLabel(item->text());
+    }
+    return WxLabel(item->text() + " (" + hotkey + ")");
+  };
+
   auto menu = new wxMenu();
   for (auto child : popup_item->wx_children()) {
     switch (child->type()) {
       case ui::MenuItem::Type::kPopup: {
         wxMenu* submenu = BuildPopupMenu(child);
-        menu->AppendSubMenu(submenu, WxLabel(child->text()));
+        menu->AppendSubMenu(submenu, label_with_hotkey(child));
         break;
       }
       case ui::MenuItem::Type::kSeparator:
         menu->AppendSeparator();
         break;
+      case ui::MenuItem::Type::kRadio: {
+        // The items of one radio group must be contiguous and separator-free
+        // for wx to treat them as exclusive.
+        wxMenuItem* item =
+            menu->AppendRadioItem(wxID_ANY, label_with_hotkey(child));
+        item->Check(child->checked());
+        if (!child->enabled()) {
+          menu->Enable(item->GetId(), false);
+        }
+        menu_items_by_id_[item->GetId()] = child;
+        break;
+      }
       case ui::MenuItem::Type::kString: {
-        wxMenuItem* item = menu->Append(wxID_ANY, WxLabel(child->text()));
+        wxMenuItem* item = menu->Append(wxID_ANY, label_with_hotkey(child));
         if (!child->enabled()) {
           menu->Enable(item->GetId(), false);
         }
@@ -414,6 +446,8 @@ wxMenu* WxWindow::BuildPopupMenu(WxMenuItem* popup_item) {
         break;
       }
       case ui::MenuItem::Type::kNormal:
+        // kNormal has no submenu behavior in any backend (Win32/GTK ignore it
+        // the same way); nothing to build here.
         break;
     }
   }
@@ -548,9 +582,14 @@ void WxWindow::OnWxDropFiles(const wxArrayString& files) {
   if (files.empty()) {
     return;
   }
-  ui::FileDropEvent e(this, WxToPath(files[0]));
   WindowDestructionReceiver destruction_receiver(this);
-  OnFileDrop(e, destruction_receiver);
+  for (size_t i = 0; i < files.size(); ++i) {
+    ui::FileDropEvent e(this, WxToPath(files[i]));
+    OnFileDrop(e, destruction_receiver);
+    if (destruction_receiver.IsWindowDestroyedOrClosed()) {
+      return;
+    }
+  }
 }
 
 void WxWindow::OnWxDpiChanged(const wxSize& new_dpi) {
@@ -649,7 +688,7 @@ void WxWindow::OnWxMouseWheel(wxMouseEvent& event) { ForwardWxMouse(event, 3); }
 
 bool WxFilePicker::Show(ui::Window* parent_window) {
   wxWindow* parent = nullptr;
-  if (auto wx_window = static_cast<WxWindow*>(parent_window)) {
+  if (auto wx_window = dynamic_cast<WxWindow*>(parent_window)) {
     parent = wx_window->view() ? static_cast<wxWindow*>(wx_window->view())
                                : static_cast<wxWindow*>(wx_window->frame());
   }
@@ -748,7 +787,10 @@ void WxWindow::AttachLibrary(
   // window size) to fit, clamped to the display work area. Never shrinks a
   // larger window.
   wxSize size = library_view_->GetBestSize();
-  size.IncTo(frame_->FromDIP(wxSize(960, 540)));
+  // Floor in logical pixels on every port: FromDIP yields physical pixels
+  // (scaled on MSW, where logical == physical), so convert back for GTK
+  // where SetClientSize takes DIP. Both are identity on MSW.
+  size.IncTo(frame_->FromPhys(frame_->FromDIP(wxSize(960, 540))));
   wxDisplay display(wxDisplay::GetFromWindow(frame_));
   if (display.IsOk()) {
     const wxRect work = display.GetClientArea();
@@ -784,6 +826,10 @@ void WxWindow::SizeGameView(uint32_t width, uint32_t height) {
   }
   wxSize size(int(ConvertSizeDpi(width, GetDpi(), GetMediumDpi())),
               int(ConvertSizeDpi(height, GetDpi(), GetMediumDpi())));
+  // ConvertSizeDpi yields physical pixels but SetClientSize and the display
+  // work area are in logical pixels (identical on MSW, DIP on GTK).
+  // FromPhys is the identity on MSW, so Windows behavior is unchanged.
+  size = frame_->FromPhys(size);
   wxDisplay display(wxDisplay::GetFromWindow(frame_));
   if (display.IsOk()) {
     const wxRect work = display.GetClientArea();
@@ -1049,6 +1095,9 @@ void WxWindow::OnViewContent(size_t index) {
     return;
   }
   uint32_t title_id = 0;
+  if (entry->title_id.size() != 8) {
+    return;
+  }
   for (const char c : entry->title_id) {
     title_id <<= 4;
     if (c >= '0' && c <= '9') {
@@ -1105,27 +1154,29 @@ void WxWindow::RefreshCompat(bool force) {
     return;
   }
   compat_fetching_ = true;
-  FetchCompatDataAsync(library_storage_root_, force,
-                       [this](bool ok, CompatMap map) {
-                         // Back to the UI thread through the view. The frame
-                         // owns the view and closing the frame quits the
-                         // process, so no lifetime guard beyond the null check
-                         // is needed.
-                         if (!library_view_) {
-                           return;
-                         }
-                         library_view_->CallAfter(
-                             [this, ok, fetched = std::move(map)]() mutable {
-                               compat_fetching_ = false;
-                               if (!library_view_) {
-                                 return;
-                               }
-                               if (ok) {
-                                 compat_ = fetched;
-                                 ApplyCompatMap(fetched);
-                               }
-                             });
-                       });
+  auto alive = alive_;
+  FetchCompatDataAsync(
+      library_storage_root_, force, [alive, this](bool ok, CompatMap map) {
+        // Worker thread: the window may be gone (closing the
+        // frame quits the process), so never touch members
+        // here — hop to the UI thread guarded by the token.
+        if (!*alive) {
+          return;
+        }
+        if (wxTheApp) {
+          wxTheApp->CallAfter(
+              [alive, this, ok, fetched = std::move(map)]() mutable {
+                if (!*alive || !library_view_) {
+                  return;
+                }
+                compat_fetching_ = false;
+                if (ok) {
+                  compat_ = fetched;
+                  ApplyCompatMap(fetched);
+                }
+              });
+        }
+      });
 }
 
 void WxWindow::ApplyCompatMap(const CompatMap& map) {
@@ -1280,15 +1331,6 @@ void WxWindow::OnScanFolder() {
   ScanLibraryFolder(WxToPath(dialog.GetPath()));
 }
 
-void WxWindow::OnProfileMenu() {
-  if (!library_view_) {
-    return;
-  }
-  wxMenu menu;
-  FillProfileMenu(&menu, library_view_);
-  library_view_->PopupMenu(&menu);
-}
-
 void WxWindow::RefreshProfileMenu() {
   if (!profile_menu_) {
     return;
@@ -1323,6 +1365,17 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
   };
 
   int count = 0;
+  // Lambdas below resolve the manager/kernel at click time, never capturing
+  // the raw pointers above: a title switch between filling the menu and
+  // clicking recreates the kernel state from under them.
+  // Note: ProfileManager::GetAccounts has no lock; ReloadProfiles (content
+  // install worker) can mutate it concurrently. The iteration below is brief
+  // and the menu rebuilds on every open, but a lock in ProfileManager is
+  // still the real fix — out of scope for this UI change.
+  auto manager = [this]() {
+    auto* ks = kernel_state_ ? kernel_state_() : nullptr;
+    return ks ? ks->xam_state()->profile_manager() : nullptr;
+  };
   for (const auto& [xuid, account] : *profiles->GetAccounts()) {
     count++;
     const uint8_t slot = profiles->GetUserIndexAssignedToProfile(xuid);
@@ -1335,15 +1388,19 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
                           bool enabled) {
         bind(
             slots, WxLabel(label),
-            [profiles, xuid, target] {
-              if (target == XUserIndexAny) {
-                if (!profiles->IsAnyProfileSlotFree()) {
-                  return;
-                }
-              } else if (profiles->GetProfile(target) != nullptr) {
+            [manager, xuid, target] {
+              auto* pm = manager();
+              if (!pm) {
                 return;
               }
-              profiles->Login(xuid, target);
+              if (target == XUserIndexAny) {
+                if (!pm->IsAnyProfileSlotFree()) {
+                  return;
+                }
+              } else if (pm->GetProfile(target) != nullptr) {
+                return;
+              }
+              pm->Login(xuid, target);
             },
             enabled);
       };
@@ -1355,21 +1412,36 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
       }
       sub->AppendSubMenu(slots, "Login");
     } else {
-      bind(sub, WxLabel("Logout " + name),
-           [profiles, slot] { profiles->Logout(slot); });
+      bind(sub, WxLabel("Logout " + name), [manager, slot] {
+        if (auto* pm = manager()) {
+          pm->Logout(slot);
+        }
+      });
     }
-    bind(sub, "Modify", [parent, kernel_state, xuid] {
-      ShowGamercardDialog(parent, kernel_state, xuid);
+    bind(sub, "Modify", [this, parent, xuid] {
+      auto* ks = kernel_state_ ? kernel_state_() : nullptr;
+      if (!ks) {
+        return;
+      }
+      ShowGamercardDialog(parent, ks, xuid);
     });
     bind(
         sub, "Show played titles",
-        [parent, kernel_state, xuid] {
-          ShowPlayedTitlesDialog(parent, kernel_state, xuid);
+        [this, parent, xuid] {
+          auto* ks = kernel_state_ ? kernel_state_() : nullptr;
+          if (!ks) {
+            return;
+          }
+          ShowPlayedTitlesDialog(parent, ks, xuid);
         },
         online);
-    bind(sub, "Show content directory", [profiles, xuid] {
+    bind(sub, "Show content directory", [manager, xuid] {
+      auto* pm = manager();
+      if (!pm) {
+        return;
+      }
       std::error_code ec = {};
-      const auto dir = profiles->GetProfileContentPath(xuid);
+      const auto dir = pm->GetProfileContentPath(xuid);
       std::filesystem::create_directories(dir, ec);
       if (!wxLaunchDefaultApplication(WxLabel(xe::path_to_utf8(dir)))) {
         XELOGE("Library: failed to open profile folder {}",
@@ -1378,7 +1450,11 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
     });
     bind(
         sub, "Delete profile",
-        [parent, profiles, xuid, name] {
+        [manager, parent, xuid, name] {
+          auto* pm = manager();
+          if (!pm) {
+            return;
+          }
           char xuid_hex[17];
           std::snprintf(xuid_hex, sizeof(xuid_hex), "%016llX",
                         (unsigned long long)xuid);
@@ -1387,7 +1463,7 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
                                    xuid_hex + ") and all its saves?"),
                            "Delete profile", wxYES_NO | wxICON_WARNING, parent);
           if (answer == wxYES) {
-            profiles->DeleteProfile(xuid);
+            pm->DeleteProfile(xuid);
           }
         },
         !title_open);
@@ -1398,12 +1474,17 @@ void WxWindow::FillProfileMenu(wxMenu* menu, wxWindow* parent) {
   if (!count) {
     menu->Append(wxID_ANY, "No profiles found")->Enable(false);
   }
-  bind(menu, "Create profile", [this, parent, profiles, kernel_state] {
+  bind(menu, "Create profile", [this, manager, parent] {
+    auto* pm = manager();
+    auto* ks = kernel_state_ ? kernel_state_() : nullptr;
+    if (!pm || !ks) {
+      return;
+    }
     std::error_code ec = {};
     const bool migrate =
-        profiles->GetAccountCount() == 0 &&
+        pm->GetAccountCount() == 0 &&
         !std::filesystem::is_empty(library_content_root_, ec) && !ec;
-    ShowCreateProfileDialog(parent, kernel_state, migrate);
+    ShowCreateProfileDialog(parent, ks, migrate);
   });
 }
 

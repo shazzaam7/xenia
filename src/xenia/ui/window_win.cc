@@ -1352,6 +1352,21 @@ void Win32MenuItem::SetEnabled(bool enabled) {
   }
 }
 
+void Win32MenuItem::OnCheckedChanged() {
+  // The check mark lives in the parent's menu, at this item's position - a leaf
+  // item has no handle of its own, only the root and popups do.
+  const int index = IndexInParent();
+  if (index < 0) {
+    return;
+  }
+  auto* parent = static_cast<Win32MenuItem*>(parent_item());
+  if (!parent->handle_) {
+    return;
+  }
+  CheckMenuItem(parent->handle_, UINT(index),
+                MF_BYPOSITION | (checked_ ? MF_CHECKED : MF_UNCHECKED));
+}
+
 void Win32MenuItem::OnChildAdded(MenuItem* generic_child_item) {
   auto child_item = static_cast<Win32MenuItem*>(generic_child_item);
 
@@ -1367,6 +1382,7 @@ void Win32MenuItem::OnChildAdded(MenuItem* generic_child_item) {
     case MenuItem::Type::kSeparator:
       AppendMenuW(handle_, MF_SEPARATOR, UINT_PTR(child_item->handle_), 0);
       break;
+    case MenuItem::Type::kRadio:
     case MenuItem::Type::kString:
       auto full_name = child_item->text();
       if (!child_item->hotkey().empty()) {
@@ -1374,6 +1390,19 @@ void Win32MenuItem::OnChildAdded(MenuItem* generic_child_item) {
       }
       AppendMenuW(handle_, MF_STRING, UINT_PTR(child_item->handle_),
                   reinterpret_cast<LPCWSTR>(xe::to_utf16(full_name).c_str()));
+      if (child_item->type() == MenuItem::Type::kRadio) {
+        // Win32 only draws a radio dot for items flagged MFT_RADIOCHECK, and
+        // that flag is not settable through AppendMenu, so promote the entry
+        // that was just appended. The item is in its parent by now, so this
+        // also applies the initial checked state.
+        const int index = child_item->IndexInParent();
+        MENUITEMINFO item_info = {0};
+        item_info.cbSize = sizeof(item_info);
+        item_info.fMask = MIIM_TYPE;
+        item_info.fType = MFT_RADIOCHECK;
+        SetMenuItemInfo(handle_, UINT(index), TRUE, &item_info);
+        child_item->OnCheckedChanged();
+      }
       break;
   }
 }
