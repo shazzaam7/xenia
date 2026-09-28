@@ -41,6 +41,7 @@
 #include "xenia/app/wx/wx_game_content_dialog.h"
 #include "xenia/app/wx/wx_game_info_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
+#include "xenia/app/wx/wx_game_scan_dialog.h"
 #include "xenia/app/wx/wx_library_store.h"
 #include "xenia/app/wx/wx_patch_dialog.h"
 #include "xenia/app/wx/wx_patch_update.h"
@@ -889,8 +890,49 @@ void WxWindow::ImportLibraryPaths(
   }
 }
 
+// Snapshot of library disc paths for a worker's membership check; the worker
+// never touches the live entries.
+static std::vector<std::filesystem::path> KnownLibraryDiscPaths(
+    const std::vector<GameEntry>& entries) {
+  std::vector<std::filesystem::path> known_paths;
+  for (const auto& entry : entries) {
+    for (const auto& disc : entry.discs) {
+      known_paths.push_back(disc.path);
+    }
+  }
+  return known_paths;
+}
+
 void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
-  ImportLibraryPaths(DiscoverGameFiles(dir));
+  if (!library_view_) {
+    return;
+  }
+  std::error_code ec = {};
+  if (!std::filesystem::is_directory(dir, ec)) {
+    return;
+  }
+  // Snapshot of library disc paths for the worker's membership check; the
+  // worker never touches the live entries.
+  const auto known_paths = KnownLibraryDiscPaths(library_entries_);
+  // One dialog covers discovery and metadata reads; nothing blocks the UI
+  // before it appears.
+  auto items = CollectNewGamesFromFolder(library_view_, dir, known_paths);
+  if (items.empty()) {
+    return;
+  }
+  // Ratings shown beside each title come from the last fetched data when
+  // present, else the on-disk cache. No download is kicked here; anything
+  // still unknown resolves through the post-import RefreshCompat.
+  CompatMap compat = compat_;
+  if (compat.empty()) {
+    LoadCompatFile(CompatCachePath(library_storage_root_), &compat);
+  }
+  auto selected =
+      ShowScanPickerDialog(library_view_, items, compat, known_paths);
+  if (selected.empty()) {
+    return;
+  }
+  ImportLibraryPaths(selected);
 }
 
 void WxWindow::ScanInstalledGames() {
@@ -1317,7 +1359,27 @@ void WxWindow::OnAddGame() {
   for (const auto& p : wx_paths) {
     paths.push_back(WxToPath(p));
   }
-  ImportLibraryPaths(paths);
+  if (paths.empty()) {
+    return;
+  }
+  const auto known_paths = KnownLibraryDiscPaths(library_entries_);
+  auto items = CollectNewGamesFromFiles(library_view_, paths, known_paths);
+  if (items.empty()) {
+    return;
+  }
+  // Same rating source as folder scans: last fetched data, else the on-disk
+  // cache. Anything still unknown resolves through the post-import
+  // RefreshCompat.
+  CompatMap compat = compat_;
+  if (compat.empty()) {
+    LoadCompatFile(CompatCachePath(library_storage_root_), &compat);
+  }
+  auto selected =
+      ShowScanPickerDialog(library_view_, items, compat, known_paths);
+  if (selected.empty()) {
+    return;
+  }
+  ImportLibraryPaths(selected);
 }
 
 void WxWindow::OnScanFolder() {
