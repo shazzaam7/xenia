@@ -73,6 +73,14 @@ jobs:
           SUBMODULES=$(grep -oP '(?<=path = )(?!third_party\/(?:DirectX(?:-Headers|ShaderCompiler)|xbyak_aarch64)).+' .gitmodules)
           git submodule update --init --depth=1 -j$(getconf _NPROCESSORS_ONLN) $SUBMODULES
 
+      # The bundle is gitignored, so a fresh runner has none; without it
+      # HTTPS downloads fail cert verification at runtime.
+      - name: Fetch CA bundle
+        run: ./xenia-build.py ca-bundle
+
+      - name: Verify CA bundle
+        run: ./xenia-build.py ca-bundle --verify-only
+
       - name: Build Xenia
         env:
           CC: clang-${{ inputs.llvm_version }}

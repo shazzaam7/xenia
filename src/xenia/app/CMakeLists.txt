@@ -50,6 +50,41 @@ target_compile_definitions(xenia-app PRIVATE
   CURL_STATICLIB
 )
 
+# CA bundle embedded into the binary (see cmake/EmbedCaBundle.cmake): generated
+# at configure time and rebuilt whenever assets/cacert.pem changes. The bundle
+# is authoritative at runtime. The script emits an empty bundle when the file
+# is absent, and HTTPS downloads then fail closed.
+set(_cacert_pem "${PROJECT_SOURCE_DIR}/assets/cacert.pem")
+set(_cacert_gen "${CMAKE_CURRENT_BINARY_DIR}/cacert_bundle.cc")
+execute_process(COMMAND ${CMAKE_COMMAND}
+  -DCACERT_PEM=${_cacert_pem} -DOUTPUT=${_cacert_gen}
+  -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake")
+if(EXISTS "${_cacert_pem}")
+  add_custom_command(
+    OUTPUT ${_cacert_gen}
+    COMMAND ${CMAKE_COMMAND}
+      -DCACERT_PEM=${_cacert_pem} -DOUTPUT=${_cacert_gen}
+      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCaBundle.cmake"
+    DEPENDS ${_cacert_pem}
+    COMMENT "Embedding CA bundle")
+else()
+  if(WIN32)
+    # Schannel uses the OS trust store; the bundle is only needed for
+    # non-Windows TLS.
+    message(STATUS
+      "assets/cacert.pem not found: skipping embedded CA bundle "
+      "(Schannel builds don't need it).")
+  else()
+    # The bundle is fetched by `xb ca-bundle`, not vendored. Surfacing
+    # this at configure time beats an opaque runtime TLS failure on non-Windows.
+    message(WARNING
+      "assets/cacert.pem not found: no CA bundle will be embedded. Run "
+      "`xb ca-bundle` (or place the bundle there) or HTTPS downloads "
+      "will fail cert verification on non-Windows builds.")
+  endif()
+endif()
+target_sources(xenia-app PRIVATE ${_cacert_gen})
+
 # Core libraries (all platforms)
 target_link_libraries(xenia-app PRIVATE
   xenia-apu
