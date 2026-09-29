@@ -59,6 +59,7 @@
 #include "xenia/app/wx/wx_config_editor_dialog.h"
 #include "xenia/app/wx/wx_console_settings_dialog.h"
 #include "xenia/app/wx/wx_content_install_dialog.h"
+#include "xenia/app/wx/wx_content_pick_dialog.h"
 #include "xenia/app/wx/wx_game_config_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
@@ -1150,9 +1151,6 @@ bool EmulatorWindow::Initialize() {
       content_menu->AddChild(
           MenuItem::Create(MenuItem::Type::kString, "Install Content",
                            std::bind(&EmulatorWindow::InstallContent, this)));
-      content_menu->AddChild(MenuItem::Create(
-          MenuItem::Type::kString, "Extract Content",
-          std::bind(&EmulatorWindow::ExtractContent, this, "")));
       zar_menu->AddChild(
           MenuItem::Create(MenuItem::Type::kString, "Create",
                            std::bind(&EmulatorWindow::CreateZarchive, this)));
@@ -1974,6 +1972,85 @@ void EmulatorWindow::InstallContent() {
   if (paths.empty()) {
     return;
   }
+
+#ifdef XENIA_HAS_WX_UI
+  // Picker flow when the library is attached: choose packages first, then
+  // install or extract only the checked ones.
+  if (auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
+      wx_window->IsLibraryAttached()) {
+    auto picked =
+        std::make_shared<std::vector<Emulator::ContentInstallEntry>>();
+    wx_ui::PrepareContentEntries(wx_window, emulator_, paths, *picked);
+    if (picked->empty()) {
+      return;
+    }
+    auto result = wx_ui::ShowContentPickDialog(wx_window, emulator_, *picked);
+    if (result.action == wx_ui::ContentPickAction::kCancel ||
+        result.checked.empty()) {
+      return;
+    }
+    auto selected =
+        std::make_shared<std::vector<Emulator::ContentInstallEntry>>();
+    for (size_t i : result.checked) {
+      selected->push_back(std::move((*picked)[i]));
+    }
+    if (result.action == wx_ui::ContentPickAction::kExtract) {
+      for (auto& entry : *selected) {
+        entry.data_installation_path_ = result.extract_dir;
+        entry.header_installation_path_ = "";
+      }
+      Emulator* extract_emulator = emulator_;
+      ui::WindowedAppContext* extract_context = &app_context_;
+      auto extract_alive = alive_;
+      auto extractionThread = std::thread(
+          [extract_alive, extract_emulator, extract_context, selected, this] {
+            for (auto& entry : *selected) {
+              extract_emulator->ExtractContentPackage(entry.path_, entry);
+            }
+            auto scan = ScanInstalledContent(extract_emulator, *selected, true);
+            if (scan.empty() || !*extract_alive) {
+              return;
+            }
+            extract_context->CallInUIThread([extract_alive, this, scan]() {
+              if (!*extract_alive) {
+                return;
+              }
+              ImportScannedPaths(scan);
+            });
+          });
+      extractionThread.detach();
+      wx_ui::ShowContentInstallDialog(wx_window, selected,
+                                      emulator_->content_root(), true);
+      return;
+    }
+    auto content_installation_status = std::move(selected);
+    Emulator* install_emulator = emulator_;
+    ui::WindowedAppContext* install_context = &app_context_;
+    auto install_alive = alive_;
+    auto installationThread =
+        std::thread([install_alive, install_emulator, install_context,
+                     content_installation_status, this] {
+          for (auto& entry : *content_installation_status) {
+            install_emulator->InstallContentPackage(entry.path_, entry);
+          }
+          auto scan = ScanInstalledContent(install_emulator,
+                                           *content_installation_status, false);
+          if (scan.empty() || !*install_alive) {
+            return;
+          }
+          install_context->CallInUIThread([install_alive, this, scan]() {
+            if (!*install_alive) {
+              return;
+            }
+            ImportScannedPaths(scan);
+          });
+        });
+    installationThread.detach();
+    wx_ui::ShowContentInstallDialog(wx_window, content_installation_status,
+                                    emulator_->content_root(), false);
+    return;
+  }
+#endif
 
   std::shared_ptr<std::vector<Emulator::ContentInstallEntry>>
       content_installation_status =
