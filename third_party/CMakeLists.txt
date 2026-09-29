@@ -828,28 +828,212 @@ target_link_libraries(libavformat PRIVATE libavutil libavcodec)
 ffmpeg_common(libavformat)
 
 # ==============================================================================
-# libcurl
+# wolfSSL (TLS backend for vendored libcurl on non-Windows)
 # ==============================================================================
+# Built once at configure time into <binary>/wolfssl-install so the libcurl
+# target below can consume it via WOLFSSL_INCLUDE_DIR/WOLFSSL_LIBRARY.
+# Windows keeps Schannel (OS cert store, no extra deps) and skips this
+# entirely.
+# Pass -DXENIA_REQUIRE_WOLFSSL=ON (CI) to fail loudly instead of falling back
+# to no TLS when the hermetic build is unavailable.
+option(XENIA_REQUIRE_WOLFSSL "Fail configure if the hermetic wolfSSL backend cannot be built (non-Windows)" OFF)
+if(NOT WIN32 AND XENIA_REQUIRE_WOLFSSL AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt")
+  message(FATAL_ERROR "wolfSSL: submodule absent but XENIA_REQUIRE_WOLFSSL=ON")
+endif()
+if(NOT WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl/CMakeLists.txt")
+  set(_wolfssl_install "${CMAKE_BINARY_DIR}/wolfssl-install")
+  set(_wolfssl_lib "${_wolfssl_install}/lib/libwolfssl.a")
+  # Guarded on the output, not the submodule revision: bumping the wolfSSL
+  # submodule in an existing build dir leaves a stale lib behind until
+  # `xb clean` (or a fresh build dir).
+  if(NOT EXISTS "${_wolfssl_lib}")
+    message(STATUS "wolfSSL: configuring hermetic build (WOLFSSL_CURL preset)")
+    set(_wolfssl_args
+      -S "${CMAKE_CURRENT_SOURCE_DIR}/wolfssl"
+      -B "${CMAKE_BINARY_DIR}/wolfssl-build"
+      -G "${CMAKE_GENERATOR}"
+      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_INSTALL_PREFIX=${_wolfssl_install}
+      # Pinned (not GNUInstallDirs default): multiarch systems would install
+      # to lib/<triplet>, which _wolfssl_lib below would not find.
+      -DCMAKE_INSTALL_LIBDIR=lib
+      -DBUILD_SHARED_LIBS=OFF
+      -DWOLFSSL_CURL=ON)
+    # Forward the toolchain bits that matter so the nested build uses the
+    # same compiler/SDK (notably macOS arch/sysroot for ARM64 builds).
+    foreach(_fwd CMAKE_C_COMPILER CMAKE_CXX_COMPILER CMAKE_TOOLCHAIN_FILE
+                CMAKE_OSX_ARCHITECTURES CMAKE_OSX_SYSROOT CMAKE_OSX_DEPLOYMENT_TARGET)
+      if(DEFINED ${_fwd})
+        list(APPEND _wolfssl_args -D${_fwd}=${${_fwd}})
+      endif()
+    endforeach()
+    execute_process(COMMAND ${CMAKE_COMMAND} ${_wolfssl_args}
+      RESULT_VARIABLE _wolfssl_cfg_rc
+      OUTPUT_VARIABLE _wolfssl_cfg_out
+      ERROR_VARIABLE _wolfssl_cfg_out)
+    if(NOT _wolfssl_cfg_rc EQUAL 0)
+      if(XENIA_REQUIRE_WOLFSSL)
+        message(FATAL_ERROR "wolfSSL configure failed:\n${_wolfssl_cfg_out}")
+      endif()
+      message(WARNING "wolfSSL configure failed:\n${_wolfssl_cfg_out}")
+    else()
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}/wolfssl-build"
+                --config Release --target install --parallel
+        RESULT_VARIABLE _wolfssl_build_rc
+        OUTPUT_VARIABLE _wolfssl_build_out
+        ERROR_VARIABLE _wolfssl_build_out)
+      if(NOT _wolfssl_build_rc EQUAL 0)
+        if(XENIA_REQUIRE_WOLFSSL)
+          message(FATAL_ERROR "wolfSSL build failed:\n${_wolfssl_build_out}")
+        endif()
+        message(WARNING "wolfSSL build failed:\n${_wolfssl_build_out}")
+      endif()
+    endif()
+    unset(_wolfssl_args)
+    unset(_fwd)
+    unset(_wolfssl_cfg_rc)
+    unset(_wolfssl_cfg_out)
+    unset(_wolfssl_build_rc)
+    unset(_wolfssl_build_out)
+  endif()
+  if(EXISTS "${_wolfssl_lib}")
+    set(WOLFSSL_INCLUDE_DIR "${_wolfssl_install}/include"
+        CACHE PATH "wolfSSL include dir" FORCE)
+    set(WOLFSSL_LIBRARY "${_wolfssl_lib}"
+        CACHE FILEPATH "wolfSSL library" FORCE)
+  else()
+    if(XENIA_REQUIRE_WOLFSSL)
+      message(FATAL_ERROR "wolfSSL: hermetic build unavailable but XENIA_REQUIRE_WOLFSSL=ON")
+    endif()
+    message(STATUS "wolfSSL: hermetic build unavailable, libcurl will have no TLS backend")
+    unset(WOLFSSL_INCLUDE_DIR CACHE)
+    unset(WOLFSSL_LIBRARY CACHE)
+  endif()
+  unset(_wolfssl_install)
+  unset(_wolfssl_lib)
+else()
+  # Submodule absent (or Windows/Schannel): drop any stale pointers from a
+  # previous configure so the libcurl block below cannot take the wolfSSL branch.
+  unset(WOLFSSL_INCLUDE_DIR CACHE)
+  unset(WOLFSSL_LIBRARY CACHE)
+endif()
+
+# libcurl (via upstream CMake: runs feature detection and generates curl_config.h)
+# ==============================================================================
+# NOTE: Do not replace this with a hand-rolled glob of lib/*.c. curl sources
+# require a generated curl_config.h (HAVE_CONFIG_H) for platform detection.
+# Without it the build fails on non-Windows with "too small curl_off_t",
+# "redefinition of 'timeval'", and missing sread/swrite macros.
+# Delegating to curl's own CMake runs those checks correctly.
+
+# Generic options that curl's CMake declares with common names; stash any
+# parent values so we do not clobber the rest of the build via CACHE FORCE.
+foreach(_xe_curl_opt BUILD_SHARED_LIBS BUILD_TESTING BUILD_EXAMPLES)
+  if(DEFINED ${_xe_curl_opt})
+    set(_xe_curl_saved_${_xe_curl_opt} "${${_xe_curl_opt}}" CACHE INTERNAL "" FORCE)
+  endif()
+endforeach()
+
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_STATIC_CURL OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
+set(BUILD_MISC_DOCS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CURL_MANUAL OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+set(CURL_BUILD_EVERYTHING OFF CACHE BOOL "" FORCE)
+set(CURL_WERROR OFF CACHE BOOL "" FORCE)
+set(PICKY_COMPILER OFF CACHE BOOL "" FORCE)
+set(CURL_LINT OFF CACHE BOOL "" FORCE)
+set(ENABLE_DEBUG OFF CACHE BOOL "" FORCE)
+set(CURL_CLANG_TIDY OFF CACHE BOOL "" FORCE)
+set(CURL_GCC_ANALYZER OFF CACHE BOOL "" FORCE)
+set(CURL_LTO OFF CACHE BOOL "" FORCE)
+set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+# Keep the HTTP-only updater dependency-free: no auto-detected compression,
+# IDN, PSL, or SSH backends (each would add a transitive static-link dep).
+set(CURL_ZLIB OFF CACHE STRING "" FORCE)
+set(CURL_BROTLI OFF CACHE STRING "" FORCE)
+set(CURL_ZSTD OFF CACHE STRING "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH OFF CACHE BOOL "" FORCE)
+set(CURL_USE_GSSAPI OFF CACHE BOOL "" FORCE)
+set(ENABLE_ARES OFF CACHE BOOL "" FORCE)
+set(CURL_USE_MBEDTLS OFF CACHE BOOL "" FORCE)
+set(CURL_USE_GNUTLS OFF CACHE BOOL "" FORCE)
+set(CURL_USE_RUSTLS OFF CACHE BOOL "" FORCE)
+set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
 
 if(WIN32)
-file(GLOB_RECURSE CURL_SOURCES 
-    "${CMAKE_CURRENT_SOURCE_DIR}/libcurl/lib/**.c" 
-    "${CMAKE_CURRENT_SOURCE_DIR}/libcurl/lib/**.h"
-)
-add_library(libcurl STATIC ${CURL_SOURCES})
-target_link_libraries(libcurl PRIVATE crypt32 secur32)
-target_include_directories(libcurl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libcurl/lib ${CMAKE_CURRENT_SOURCE_DIR}/libcurl/include)
-target_compile_definitions(libcurl PRIVATE
-  BUILDING_LIBCURL HTTP_ONLY USE_SCHANNEL USE_WINDOWS_SSPI
-)
+  # Schannel uses the OS cert store (no extra deps).
+  set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+  set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+  set(CURL_WINDOWS_SSPI ON CACHE BOOL "" FORCE)
+  set(CURL_USE_WOLFSSL OFF CACHE BOOL "" FORCE)
+elseif(DEFINED WOLFSSL_LIBRARY AND EXISTS "${WOLFSSL_LIBRARY}")
+  set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+  set(CURL_USE_WOLFSSL ON CACHE BOOL "" FORCE)
+  set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
+  set(CURL_WINDOWS_SSPI OFF CACHE BOOL "" FORCE)
+  # Let curl's FindWolfSSL CONFIG path locate the hermetic install as well.
+  list(APPEND CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/wolfssl-install")
+else()
+  if(XENIA_REQUIRE_WOLFSSL)
+    message(FATAL_ERROR "libcurl: wolfSSL backend unavailable but XENIA_REQUIRE_WOLFSSL=ON")
+  else()
+    message(WARNING "libcurl: wolfSSL unavailable, building without a TLS backend")
+  endif()
+  set(CURL_ENABLE_SSL OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_WOLFSSL OFF CACHE BOOL "" FORCE)
+  set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
+  set(CURL_WINDOWS_SSPI OFF CACHE BOOL "" FORCE)
 endif()
 
-# Linking against system library
-# Instead we should build libcurl with wolfssl
-if(LINUX)
-# find_package(CURL 8.20.0 EXACT REQUIRED)
-find_package(CURL REQUIRED)
+add_subdirectory(libcurl EXCLUDE_FROM_ALL)
+
+# Existing xenia targets link `libcurl`; upstream provides `libcurl_static`.
+if(TARGET libcurl_static AND NOT TARGET libcurl)
+  add_library(libcurl ALIAS libcurl_static)
 endif()
+
+# curl links its deps PRIVATE, which does not propagate through a static
+# archive to the final executable. Re-expose them as PUBLIC so xenia-app
+# resolves them at link time (mirrors the previous hand-rolled target).
+if(TARGET libcurl_static)
+  if(WIN32)
+    target_link_libraries(libcurl_static PUBLIC crypt32 secur32)
+  elseif(TARGET CURL::wolfssl)
+    target_link_libraries(libcurl_static PUBLIC CURL::wolfssl)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_libraries(libcurl_static PUBLIC m)
+    endif()
+  elseif(DEFINED WOLFSSL_LIBRARY AND EXISTS "${WOLFSSL_LIBRARY}")
+    target_include_directories(libcurl_static PRIVATE ${WOLFSSL_INCLUDE_DIR})
+    target_link_libraries(libcurl_static PUBLIC ${WOLFSSL_LIBRARY})
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_libraries(libcurl_static PUBLIC m)
+    endif()
+  endif()
+endif()
+
+# Restore stashed generic options.
+foreach(_xe_curl_opt BUILD_SHARED_LIBS BUILD_TESTING BUILD_EXAMPLES)
+  if(DEFINED _xe_curl_saved_${_xe_curl_opt})
+    set(${_xe_curl_opt} "${_xe_curl_saved_${_xe_curl_opt}}" CACHE BOOL "" FORCE)
+    unset(_xe_curl_saved_${_xe_curl_opt} CACHE)
+  else()
+    unset(${_xe_curl_opt} CACHE)
+  endif()
+endforeach()
+unset(_xe_curl_opt)
 
 # ==============================================================================
 # miniupnp
