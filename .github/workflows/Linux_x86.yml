@@ -100,7 +100,14 @@ jobs:
         env:
           CC: clang-${{ inputs.llvm_version }}
           CXX: clang++-${{ inputs.llvm_version }}
-        run: ./xenia-build.py build --config=Release
+        run: ./xenia-build.py build --config=Release --cmake-define XENIA_REQUIRE_WOLFSSL=ON
+
+      - name: Verify hermetic TLS
+        run: |
+          grep -q "WOLFSSL_LIBRARY:FILEPATH=" build/CMakeCache.txt
+          test -f build/wolfssl-install/lib/libwolfssl.a
+          test -s assets/cacert.pem
+          grep -q "BEGIN CERTIFICATE" assets/cacert.pem
 
       - name: Prepare AppImage
         id: prepare_artifacts
