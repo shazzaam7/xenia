@@ -42,8 +42,7 @@ class WxLibraryView : public wxPanel {
     virtual void OnBootGame(size_t index, int disc_number) = 0;
     virtual void OnRemoveGame(size_t index) = 0;
     virtual void OnShowInFolder(size_t index) = 0;
-    virtual void OnAddGame() = 0;
-    virtual void OnScanFolder() = 0;
+    virtual void OnAddGames() = 0;
     virtual void OnViewContent(size_t index) = 0;
     // Per-title config overrides (the game library's right-click entry).
     virtual void OnGameConfig(size_t index) = 0;
@@ -100,8 +99,7 @@ class WxLibraryView : public wxPanel {
   void OnActivate(wxListEvent& event);
   void OnContextTable(wxListEvent& event);
   void OnContextGrid(wxListEvent& event);
-  void OnAdd(wxCommandEvent& event);
-  void OnScan(wxCommandEvent& event);
+  void OnAddGames(wxCommandEvent& event);
   void OnMenu(wxCommandEvent& event);
 
   Delegate* delegate_;

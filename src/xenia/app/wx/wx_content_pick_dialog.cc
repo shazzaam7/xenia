@@ -33,6 +33,7 @@
 #include <wx/statbmp.h>
 #include <wx/stattext.h>
 
+#include "xenia/app/wx/wx_game_scan_dialog.h"
 #include "xenia/app/wx/wx_util.h"
 #include "xenia/app/wx/wx_window.h"
 #include "xenia/app/wx/wx_window_priv.h"
@@ -186,12 +187,9 @@ class WxContentPickDialog : public wxDialog {
                                  "extract:")),
         0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     header->AddStretchSpacer(1);
-    auto* scan_folder = new wxButton(this, wxID_ANY, "Scan Folder...");
-    scan_folder->Bind(wxEVT_BUTTON, &WxContentPickDialog::OnScanFolder, this);
-    header->Add(scan_folder, 0, wxRIGHT, FromDIP(8));
-    auto* add_files = new wxButton(this, wxID_ANY, "Add Files...");
-    add_files->Bind(wxEVT_BUTTON, &WxContentPickDialog::OnAddFiles, this);
-    header->Add(add_files, 0);
+    auto* add_more = new wxButton(this, wxID_ANY, "Add More...");
+    add_more->Bind(wxEVT_BUTTON, &WxContentPickDialog::OnAddMore, this);
+    header->Add(add_more, 0);
     outer->Add(header, 0, wxEXPAND | wxALL, FromDIP(10));
 
     scrolled_ = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
@@ -309,29 +307,39 @@ class WxContentPickDialog : public wxDialog {
   void OnSelectAll(wxCommandEvent&) { SetAll(true); }
   void OnSelectNone(wxCommandEvent&) { SetAll(false); }
 
-  void OnScanFolder(wxCommandEvent&) {
-    wxDirDialog dir_dialog(this, "Scan Folder for Content Packages");
-    if (dir_dialog.ShowModal() != wxID_OK) {
-      return;
+  void OnAddMore(wxCommandEvent&) {
+    switch (AskAddSource(this, "Add Content",
+                         "Add more content packages from files or by scanning "
+                         "a folder?")) {
+      case AddSource::kFiles: {
+        wxFileDialog file_dialog(
+            this, "Select Content Package", wxString(), wxString(),
+            "All files (*.*)|*.*",
+            wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
+        if (file_dialog.ShowModal() != wxID_OK) {
+          return;
+        }
+        wxArrayString wx_paths;
+        file_dialog.GetPaths(wx_paths);
+        std::vector<std::filesystem::path> paths;
+        for (const auto& p : wx_paths) {
+          paths.push_back(WxToPath(p));
+        }
+        AppendPaths(paths, emulator_);
+        break;
+      }
+      case AddSource::kFolder: {
+        wxDirDialog dir_dialog(this, "Scan Folder for Content Packages");
+        if (dir_dialog.ShowModal() != wxID_OK) {
+          return;
+        }
+        AppendPaths(DiscoverContentPackages(WxToPath(dir_dialog.GetPath())),
+                    emulator_);
+        break;
+      }
+      case AddSource::kCancel:
+        break;
     }
-    AppendPaths(DiscoverContentPackages(WxToPath(dir_dialog.GetPath())),
-                emulator_);
-  }
-
-  void OnAddFiles(wxCommandEvent&) {
-    wxFileDialog file_dialog(this, "Select Content Package", wxString(),
-                             wxString(), "All files (*.*)|*.*",
-                             wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
-    if (file_dialog.ShowModal() != wxID_OK) {
-      return;
-    }
-    wxArrayString wx_paths;
-    file_dialog.GetPaths(wx_paths);
-    std::vector<std::filesystem::path> paths;
-    for (const auto& p : wx_paths) {
-      paths.push_back(WxToPath(p));
-    }
-    AppendPaths(paths, emulator_);
   }
 
   void OnExtract(wxCommandEvent&) {

@@ -13,6 +13,9 @@
 
 #include "xenia/app/wx/wx_game_scan_dialog.h"
 
+#include "xenia/app/wx/wx_window.h"
+#include "xenia/app/wx/wx_window_priv.h"
+
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -89,7 +92,59 @@ std::string GameFileTypeName(GameFileType type) {
   }
 }
 
+// Modal return codes for the source choice (Cancel uses wxID_CANCEL).
+constexpr int kSourceFiles = wxID_HIGHEST + 2;
+constexpr int kSourceFolder = wxID_HIGHEST + 3;
+
 }  // namespace
+
+AddSource AskAddSource(wxWindow* parent, const std::string& title,
+                       const std::string& prompt) {
+  if (!parent) {
+    return AddSource::kCancel;
+  }
+  wxDialog dialog(parent, wxID_ANY, WxLabel(title), wxDefaultPosition,
+                  wxDefaultSize, wxDEFAULT_DIALOG_STYLE);
+  auto* outer = new wxBoxSizer(wxVERTICAL);
+  outer->Add(new wxStaticText(&dialog, wxID_ANY, WxLabel(prompt)), 0, wxALL,
+             dialog.FromDIP(10));
+  auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+  auto* files = new wxButton(&dialog, kSourceFiles, "Select Files...");
+  // Stock IDs close the modal loop on their own; custom codes need an
+  // explicit EndModal.
+  files->Bind(
+      wxEVT_BUTTON,
+      [&dialog](wxCommandEvent&) { dialog.EndModal(kSourceFiles); },
+      kSourceFiles);
+  buttons->Add(files, 0, wxRIGHT, dialog.FromDIP(8));
+  auto* folder = new wxButton(&dialog, kSourceFolder, "Scan Folder...");
+  folder->Bind(
+      wxEVT_BUTTON,
+      [&dialog](wxCommandEvent&) { dialog.EndModal(kSourceFolder); },
+      kSourceFolder);
+  buttons->Add(folder, 0, wxRIGHT, dialog.FromDIP(8));
+  buttons->Add(new wxButton(&dialog, wxID_CANCEL), 0);
+  outer->Add(buttons, 0, wxEXPAND | wxALL, dialog.FromDIP(10));
+  dialog.SetSizerAndFit(outer);
+  const int code = dialog.ShowModal();
+  if (code == kSourceFiles) {
+    return AddSource::kFiles;
+  }
+  if (code == kSourceFolder) {
+    return AddSource::kFolder;
+  }
+  return AddSource::kCancel;
+}
+
+AddSource AskAddSource(WxWindow* window, const std::string& title,
+                       const std::string& prompt) {
+  if (!window) {
+    return AddSource::kCancel;
+  }
+  return AskAddSource(window->view() ? static_cast<wxWindow*>(window->view())
+                                     : static_cast<wxWindow*>(window->frame()),
+                      title, prompt);
+}
 
 namespace {
 
@@ -246,12 +301,9 @@ class WxScanPickerDialog : public wxDialog {
                                          "library:")),
                 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     header->AddStretchSpacer(1);
-    auto* scan_another = new wxButton(this, wxID_ANY, "Scan Another Folder...");
-    scan_another->Bind(wxEVT_BUTTON, &WxScanPickerDialog::OnScanAnother, this);
-    header->Add(scan_another, 0, wxRIGHT, FromDIP(8));
-    auto* add_another = new wxButton(this, wxID_ANY, "Add Another Game...");
-    add_another->Bind(wxEVT_BUTTON, &WxScanPickerDialog::OnAddAnother, this);
-    header->Add(add_another, 0);
+    auto* add_more = new wxButton(this, wxID_ANY, "Add More...");
+    add_more->Bind(wxEVT_BUTTON, &WxScanPickerDialog::OnAddMore, this);
+    header->Add(add_more, 0);
     outer->Add(header, 0, wxEXPAND | wxALL, FromDIP(10));
 
     scrolled_ = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition,
@@ -361,32 +413,41 @@ class WxScanPickerDialog : public wxDialog {
   void OnSelectAll(wxCommandEvent&) { SetAll(true); }
   void OnSelectNone(wxCommandEvent&) { SetAll(false); }
 
-  void OnScanAnother(wxCommandEvent&) {
-    wxDirDialog dir_dialog(this, "Scan Another Folder for Games");
-    if (dir_dialog.ShowModal() != wxID_OK) {
-      return;
+  void OnAddMore(wxCommandEvent&) {
+    switch (
+        AskAddSource(this, "Add Games",
+                     "Add more games from files or by scanning a folder?")) {
+      case AddSource::kFiles: {
+        wxFileDialog file_dialog(
+            this, "Add Game", wxString(), wxString(),
+            "Xbox 360 games "
+            "(*.xex;*.iso;*.xiso;*.zar)|*.xex;*.iso;*.xiso;*.zar|"
+            "All files (*.*)|*.*",
+            wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
+        if (file_dialog.ShowModal() != wxID_OK) {
+          return;
+        }
+        wxArrayString wx_paths;
+        file_dialog.GetPaths(wx_paths);
+        std::vector<std::filesystem::path> paths;
+        for (const auto& p : wx_paths) {
+          paths.push_back(WxToPath(p));
+        }
+        AppendMore(CollectNewGamesFromFiles(this, paths, known_paths_));
+        break;
+      }
+      case AddSource::kFolder: {
+        wxDirDialog dir_dialog(this, "Scan Folder for Games");
+        if (dir_dialog.ShowModal() != wxID_OK) {
+          return;
+        }
+        AppendMore(CollectNewGamesFromFolder(
+            this, WxToPath(dir_dialog.GetPath()), known_paths_));
+        break;
+      }
+      case AddSource::kCancel:
+        break;
     }
-    auto more = CollectNewGamesFromFolder(this, WxToPath(dir_dialog.GetPath()),
-                                          known_paths_);
-    AppendMore(std::move(more));
-  }
-
-  void OnAddAnother(wxCommandEvent&) {
-    wxFileDialog file_dialog(
-        this, "Add Another Game", wxString(), wxString(),
-        "Xbox 360 games (*.xex;*.iso;*.xiso;*.zar)|*.xex;*.iso;*.xiso;*.zar|"
-        "All files (*.*)|*.*",
-        wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
-    if (file_dialog.ShowModal() != wxID_OK) {
-      return;
-    }
-    wxArrayString wx_paths;
-    file_dialog.GetPaths(wx_paths);
-    std::vector<std::filesystem::path> paths;
-    for (const auto& p : wx_paths) {
-      paths.push_back(WxToPath(p));
-    }
-    AppendMore(CollectNewGamesFromFiles(this, paths, known_paths_));
   }
 
   void AppendMore(std::vector<ScannedGameItem> more) {
