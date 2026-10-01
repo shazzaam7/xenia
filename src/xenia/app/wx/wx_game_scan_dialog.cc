@@ -381,15 +381,23 @@ class WxScanPickerDialog : public wxDialog {
     bold.SetWeight(wxFONTWEIGHT_BOLD);
     title->SetFont(bold);
     title_row->Add(title, 0, wxALIGN_CENTER_VERTICAL);
+    // Always show a rating, Unknown included. A missing database
+    // (no compatibility_data.json yet, or a failed download) leaves the map
+    // empty, and a title with no report is absent from it; rendering nothing
+    // for either read as "no data" rather than "not rated", and disagreed with
+    // the library view, which shows the Unknown badge for the same entries.
+    CompatRating rating = CompatRating::kUnknown;
     if (const CompatInfo* info = FindCompat(compat_, item.meta.title_id)) {
-      auto* rating =
-          new wxStaticText(scrolled_, wxID_ANY, CompatName(info->rating));
-      wxFont rating_font = rating->GetFont();
-      rating_font.SetWeight(wxFONTWEIGHT_BOLD);
-      rating->SetFont(rating_font);
-      rating->SetForegroundColour(CompatColor(info->rating));
-      title_row->Add(rating, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, FromDIP(8));
+      rating = info->rating;
     }
+    auto* rating_text =
+        new wxStaticText(scrolled_, wxID_ANY, CompatName(rating));
+    wxFont rating_font = rating_text->GetFont();
+    rating_font.SetWeight(wxFONTWEIGHT_BOLD);
+    rating_text->SetFont(rating_font);
+    rating_text->SetForegroundColour(CompatColor(rating));
+    title_row->Add(rating_text, 0, wxLEFT | wxALIGN_CENTER_VERTICAL,
+                   FromDIP(8));
     texts->Add(title_row, 0, wxEXPAND | wxBOTTOM, FromDIP(2));
     // Row 2: labeled IDs (version omitted when unknown).
     std::string ids_line = "Title ID: " + item.meta.title_id +

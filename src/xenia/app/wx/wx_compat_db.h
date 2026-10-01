@@ -10,6 +10,7 @@
 #ifndef XENIA_APP_WX_COMPAT_DB_H_
 #define XENIA_APP_WX_COMPAT_DB_H_
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -102,6 +103,16 @@ using CompatFetchCallback = std::function<void(bool success, CompatMap map)>;
 // to the on-disk cache; `success` is false only when no usable data exists.
 void FetchCompatDataAsync(std::filesystem::path storage_root, bool force,
                           CompatFetchCallback done);
+
+// Same load-then-download behavior as FetchCompatDataAsync, but runs on the
+// calling thread and returns the result directly. Intended for callers that
+// must have the data before showing UI (and can afford to block while a
+// progress dialog is pulsed). Pass an atomic that the fetch polls so a cancel
+// is honored between steps; `out` is left untouched when the fetch yields
+// nothing usable. Blocking network I/O happens on a worker thread at the call
+// site, never here.
+bool FetchCompatDataSync(const std::filesystem::path& storage_root, bool force,
+                         const std::atomic<bool>& cancel, CompatMap* out);
 
 }  // namespace wx_ui
 }  // namespace app
