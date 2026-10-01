@@ -343,6 +343,47 @@ bool WriteCacheAtomically(const std::filesystem::path& cache,
   return !ec;
 }
 
+// Loads the cache when it is fresh, else downloads (when supported) and
+// caches the result, falling back to a stale cache on any failure. Safe to
+// call from any thread; `cancel` is polled between steps, so an in-flight
+// HTTP request still runs to its own timeout before a cancelled call returns.
+// Returns true when `out` ends up holding usable data.
+bool LoadOrDownloadCompatData(const std::filesystem::path& storage_root,
+                              bool force, const std::atomic<bool>* cancel,
+                              CompatMap* out) {
+  if (!out) {
+    return false;
+  }
+  if (cancel && cancel->load()) {
+    return false;
+  }
+  CompatMap map;
+  const auto cache = CompatCachePath(storage_root);
+  if (!force && CompatCacheFresh(storage_root) && LoadCompatFile(cache, &map)) {
+    *out = std::move(map);
+    return true;
+  }
+#ifdef XENIA_HAS_CURL
+  if (!cancel || !cancel->load()) {
+    std::string body;
+    if (DownloadCompatData(&body) && ParseCompatJson(body, &map)) {
+      // A cache write failure must not fail the data itself.
+      if (!WriteCacheAtomically(cache, body)) {
+        XELOGW(
+            "CompatDb: downloaded data is live but the cache write failed: {}",
+            xe::path_to_utf8(cache));
+      }
+      *out = std::move(map);
+      return true;
+    }
+    XELOGE("CompatDb: download failed, falling back to on-disk cache");
+  }
+#else
+  XELOGW("CompatDb: no download support in this build, using on-disk cache");
+#endif
+  return LoadCompatFile(cache, out);
+}
+
 }  // namespace
 
 bool HttpGet(const std::string& url, std::string* body) {
@@ -420,33 +461,15 @@ void FetchCompatDataAsync(std::filesystem::path storage_root, bool force,
   std::thread([storage_root = std::move(storage_root), force,
                done = std::move(done)]() mutable {
     CompatMap map;
-    const auto cache = CompatCachePath(storage_root);
-    if (!force && CompatCacheFresh(storage_root) &&
-        LoadCompatFile(cache, &map)) {
-      done(true, std::move(map));
-      return;
-    }
-#ifdef XENIA_HAS_CURL
-    std::string body;
-    if (DownloadCompatData(&body) && ParseCompatJson(body, &map)) {
-      // A cache write failure must not fail the data itself.
-      if (!WriteCacheAtomically(cache, body)) {
-        XELOGW(
-            "CompatDb: downloaded data is live but the cache write "
-            "failed: {}",
-            xe::path_to_utf8(cache));
-      }
-      done(true, std::move(map));
-      return;
-    }
-    XELOGE("CompatDb: download failed, falling back to on-disk cache");
-#else
-    XELOGW(
-        "CompatDb: no download support in this build, using on-disk "
-        "cache");
-#endif  // XENIA_HAS_CURL
-    done(LoadCompatFile(cache, &map), std::move(map));
+    const bool ok =
+        LoadOrDownloadCompatData(storage_root, force, nullptr, &map);
+    done(ok, std::move(map));
   }).detach();
+}
+
+bool FetchCompatDataSync(const std::filesystem::path& storage_root, bool force,
+                         const std::atomic<bool>& cancel, CompatMap* out) {
+  return LoadOrDownloadCompatData(storage_root, force, &cancel, out);
 }
 
 }  // namespace wx_ui
