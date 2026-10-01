@@ -18,6 +18,7 @@
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
+#include <wx/choicdlg.h>
 #include <wx/dcmemory.h>
 #include <wx/dialog.h>
 #include <wx/dirdlg.h>
@@ -130,9 +131,53 @@ std::vector<std::filesystem::path> DiscoverContentPackages(
   return found;
 }
 
+bool AskContentTypesForParent(wxWindow* parent,
+                              std::set<XContentType>& chosen) {
+  if (!parent) {
+    return false;
+  }
+  std::vector<XContentType> types;
+  wxArrayString choices;
+  for (const auto& [type, name] : xe::XContentTypeMap) {
+    if (type == xe::XContentType::kAll) {
+      continue;
+    }
+    types.push_back(type);
+    choices.Add(WxLabel(name));
+  }
+  wxMultiChoiceDialog dialog(
+      parent, WxLabel("Scan the folder for these content types:"),
+      WxLabel("Content Types"), choices);
+  wxArrayInt all;
+  for (int i = 0; i < int(choices.size()); i++) {
+    all.Add(i);
+  }
+  dialog.SetSelections(all);
+  if (dialog.ShowModal() != wxID_OK) {
+    return false;
+  }
+  wxArrayInt selected = dialog.GetSelections();
+  for (int i : selected) {
+    chosen.insert(types[size_t(i)]);
+  }
+  return true;
+}
+
+bool AskContentTypes(wxWindow* parent, std::set<XContentType>& chosen) {
+  return AskContentTypesForParent(parent, chosen);
+}
+
+bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen) {
+  if (!window) {
+    return false;
+  }
+  return AskContentTypesForParent(PickParent(window), chosen);
+}
+
 void PrepareContentEntries(WxWindow* window, Emulator* emulator,
                            const std::vector<std::filesystem::path>& paths,
-                           std::vector<Emulator::ContentInstallEntry>& out) {
+                           std::vector<Emulator::ContentInstallEntry>& out,
+                           const std::set<XContentType>& allowed_types) {
   if (!window || !emulator || paths.empty()) {
     return;
   }
@@ -153,7 +198,13 @@ void PrepareContentEntries(WxWindow* window, Emulator* emulator,
     Emulator::ContentInstallEntry entry(paths[i]);
     emulator->ProcessContentPackageHeader(paths[i], entry);
     if (entry.installation_state_.load() != Emulator::InstallState::failed) {
-      added.push_back(std::move(entry));
+      if (!allowed_types.empty() &&
+          allowed_types.count(entry.content_type_) == 0) {
+        XELOGW("Content: skipping filtered-out package {}",
+               xe::path_to_utf8(paths[i]));
+      } else {
+        added.push_back(std::move(entry));
+      }
     } else {
       XELOGW("Content: skipping unrecognized package {}",
              xe::path_to_utf8(paths[i]));
@@ -290,12 +341,13 @@ class WxContentPickDialog : public wxDialog {
   }
 
   void AppendPaths(const std::vector<std::filesystem::path>& paths,
-                   Emulator* emulator) {
+                   Emulator* emulator,
+                   const std::set<XContentType>& allowed_types) {
     if (paths.empty()) {
       return;
     }
     const size_t from = entries_.size();
-    PrepareContentEntries(window_, emulator, paths, entries_);
+    PrepareContentEntries(window_, emulator, paths, entries_, allowed_types);
     for (size_t i = from; i < entries_.size(); i++) {
       AddEntryRow(i);
     }
@@ -325,7 +377,7 @@ class WxContentPickDialog : public wxDialog {
         for (const auto& p : wx_paths) {
           paths.push_back(WxToPath(p));
         }
-        AppendPaths(paths, emulator_);
+        AppendPaths(paths, emulator_, {});
         break;
       }
       case AddSource::kFolder: {
@@ -333,8 +385,12 @@ class WxContentPickDialog : public wxDialog {
         if (dir_dialog.ShowModal() != wxID_OK) {
           return;
         }
+        std::set<XContentType> allowed_types;
+        if (!AskContentTypes(this, allowed_types) || allowed_types.empty()) {
+          return;
+        }
         AppendPaths(DiscoverContentPackages(WxToPath(dir_dialog.GetPath())),
-                    emulator_);
+                    emulator_, allowed_types);
         break;
       }
       case AddSource::kCancel:
