@@ -268,6 +268,16 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // Fills ratings only for entries that have none, from the last fetched
   // data. Used after imports; never clears.
   void FillMissingCompat();
+  // Resolves the compatibility data the game picker dialog renders, in cost
+  // order: the session's fetched map, then the on-disk cache, then a download
+  // (under a cancellable progress dialog) when neither exists. Leaves `out`
+  // empty when nothing is available, and the picker then shows Unknown.
+  void CompatMapForScanPicker(CompatMap* out);
+  // Shared fetch behind CompatMapForScanPicker and RefreshCompat: downloads on
+  // a worker while a cancellable progress dialog is pulsed. Returns true with
+  // *out filled on success without cancel. UI thread only.
+  bool FetchCompatWithProgress(const std::string& message, bool force,
+                               CompatMap* out);
   // Resolves the kernel state (null before setup/after shutdown,
   // re-created on every ResetTitle, so never cached).
   std::function<kernel::KernelState*()> kernel_state_;

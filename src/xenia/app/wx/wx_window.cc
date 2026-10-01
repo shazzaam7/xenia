@@ -29,14 +29,17 @@
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/panel.h>
+#include <wx/progdlg.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/timer.h>
 #include <wx/utils.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <thread>
 
 #include "xenia/app/wx/wx_game_content_dialog.h"
 #include "xenia/app/wx/wx_game_info_dialog.h"
@@ -903,6 +906,76 @@ static std::vector<std::filesystem::path> KnownLibraryDiscPaths(
   return known_paths;
 }
 
+// Runs a compatibility fetch on a worker thread while a cancellable progress
+// dialog is pulsed on the UI thread. Returns true with *out filled when data
+// arrived and the user did not cancel. Must be called on the UI thread; the
+// worker is always joined before returning, so no lifetime token is needed.
+bool WxWindow::FetchCompatWithProgress(const std::string& message, bool force,
+                                       CompatMap* out) {
+  if (!out || !library_view_) {
+    return false;
+  }
+  std::atomic<bool> done{false};
+  std::atomic<bool> cancel{false};
+  CompatMap fetched;
+  const auto storage_root = library_storage_root_;
+  std::thread worker([storage_root, force, &fetched, &done, &cancel]() {
+    FetchCompatDataSync(storage_root, force, cancel, &fetched);
+    done.store(true);
+  });
+  wxProgressDialog progress("Compatibility data", WxLabel(message), 100,
+                            library_view_, wxPD_APP_MODAL | wxPD_CAN_ABORT);
+  while (!done.load()) {
+    if (!progress.Pulse()) {
+      cancel.store(true);
+    }
+    wxMilliSleep(50);
+  }
+  worker.join();
+  // A cancel pressed mid-download only takes effect here: the in-flight HTTP
+  // request runs to its own timeout, so the dialog stays up until the worker
+  // finishes. Discarding the result keeps the cancel honest.
+  if (cancel.load() || fetched.empty()) {
+    return false;
+  }
+  *out = std::move(fetched);
+  return true;
+}
+
+void WxWindow::CompatMapForScanPicker(CompatMap* out) {
+  if (!out || !library_view_) {
+    return;
+  }
+  // Data fetched this session wins: no disk or network cost at all.
+  if (!compat_.empty()) {
+    *out = compat_;
+    return;
+  }
+  const auto cache = CompatCachePath(library_storage_root_);
+  if (LoadCompatFile(cache, out)) {
+    return;
+  }
+  // Nothing usable on disk (first run, or a cache that was deleted): download
+  // it so the picker shows real ratings rather than Unknown for everything.
+  // Only the missing-data case reaches here, so this never adds latency to the
+  // common path.
+  CompatMap fetched;
+  if (!FetchCompatWithProgress("Downloading compatibility ratings...", true,
+                               &fetched)) {
+    // Cancelled, offline, or no report for these titles: the picker falls back
+    // to Unknown and the post-import RefreshCompat retries in the background.
+    return;
+  }
+  // Remember it: later scans and FillMissingCompat reuse this, and the
+  // library badges get the new ratings without waiting for a refresh.
+  // Note: copy, not move — compat_ must stay populated after this returns.
+  compat_ = fetched;
+  if (library_view_) {
+    ApplyCompatMap(compat_);
+  }
+  *out = compat_;
+}
+
 void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
   if (!library_view_) {
     return;
@@ -920,13 +993,11 @@ void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
   if (items.empty()) {
     return;
   }
-  // Ratings shown beside each title come from the last fetched data when
-  // present, else the on-disk cache. No download is kicked here; anything
-  // still unknown resolves through the post-import RefreshCompat.
-  CompatMap compat = compat_;
-  if (compat.empty()) {
-    LoadCompatFile(CompatCachePath(library_storage_root_), &compat);
-  }
+  // Ratings shown beside each title come from the last fetched data, else the
+  // on-disk cache, else a download kicked here (only when neither has data).
+  // Anything still unknown resolves through the post-import RefreshCompat.
+  CompatMap compat;
+  CompatMapForScanPicker(&compat);
   auto selected =
       ShowScanPickerDialog(library_view_, items, compat, known_paths);
   if (selected.empty()) {
@@ -1195,30 +1266,30 @@ void WxWindow::RefreshCompat(bool force) {
   if (compat_fetching_ || library_storage_root_.empty()) {
     return;
   }
+  // Fast silent path: no download is due (fresh cache), so just reload it.
+  // Keeps the automatic post-import refresh flicker-free.
+  if (!force && CompatCacheFresh(library_storage_root_)) {
+    CompatMap cached;
+    if (LoadCompatFile(CompatCachePath(library_storage_root_), &cached)) {
+      compat_ = cached;
+      ApplyCompatMap(cached);
+    }
+    return;
+  }
+  // A download is due (manual Refresh, or a stale/missing cache): run it under
+  // the same cancellable progress dialog the scan picker uses, so every
+  // compatibility download looks the same. The worker is joined before
+  // returning, so unlike the old detached fetch this needs no lifetime token.
   compat_fetching_ = true;
-  auto alive = alive_;
-  FetchCompatDataAsync(
-      library_storage_root_, force, [alive, this](bool ok, CompatMap map) {
-        // Worker thread: the window may be gone (closing the
-        // frame quits the process), so never touch members
-        // here — hop to the UI thread guarded by the token.
-        if (!*alive) {
-          return;
-        }
-        if (wxTheApp) {
-          wxTheApp->CallAfter(
-              [alive, this, ok, fetched = std::move(map)]() mutable {
-                if (!*alive || !library_view_) {
-                  return;
-                }
-                compat_fetching_ = false;
-                if (ok) {
-                  compat_ = fetched;
-                  ApplyCompatMap(fetched);
-                }
-              });
-        }
-      });
+  CompatMap fetched;
+  const bool ok = FetchCompatWithProgress("Updating compatibility ratings...",
+                                          force, &fetched);
+  compat_fetching_ = false;
+  if (!ok) {
+    return;
+  }
+  compat_ = fetched;
+  ApplyCompatMap(fetched);
 }
 
 void WxWindow::ApplyCompatMap(const CompatMap& map) {
@@ -1385,12 +1456,10 @@ void WxWindow::OnAddGame() {
     return;
   }
   // Same rating source as folder scans: last fetched data, else the on-disk
-  // cache. Anything still unknown resolves through the post-import
-  // RefreshCompat.
-  CompatMap compat = compat_;
-  if (compat.empty()) {
-    LoadCompatFile(CompatCachePath(library_storage_root_), &compat);
-  }
+  // cache, else a download. Anything still unknown resolves through the
+  // post-import RefreshCompat.
+  CompatMap compat;
+  CompatMapForScanPicker(&compat);
   auto selected =
       ShowScanPickerDialog(library_view_, items, compat, known_paths);
   if (selected.empty()) {
