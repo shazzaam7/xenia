@@ -13,8 +13,10 @@
 #include "xenia/app/wx/wx_content_pick_dialog.h"
 
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <set>
+#include <thread>
 
 #include <wx/button.h>
 #include <wx/checkbox.h>
@@ -107,7 +109,7 @@ wxBitmap PlaceholderBitmap(int px) {
 }  // namespace
 
 std::vector<std::filesystem::path> DiscoverContentPackages(
-    const std::filesystem::path& dir) {
+    const std::filesystem::path& dir, const std::atomic<bool>* cancel) {
   std::vector<std::filesystem::path> found;
   std::error_code ec = {};
   if (!std::filesystem::is_directory(dir, ec)) {
@@ -116,7 +118,7 @@ std::vector<std::filesystem::path> DiscoverContentPackages(
   std::error_code rec = {};
   for (auto it = std::filesystem::recursive_directory_iterator(dir, rec);
        it != std::filesystem::recursive_directory_iterator(); ++it) {
-    if (rec) {
+    if (rec || (cancel && cancel->load())) {
       break;
     }
     std::error_code ec2 = {};
@@ -131,7 +133,7 @@ std::vector<std::filesystem::path> DiscoverContentPackages(
   return found;
 }
 
-bool AskContentTypesForParent(wxWindow* parent,
+bool AskContentTypesForParent(wxWindow* parent, const std::string& prompt,
                               std::set<XContentType>& chosen) {
   if (!parent) {
     return false;
@@ -146,7 +148,10 @@ bool AskContentTypesForParent(wxWindow* parent,
     choices.Add(WxLabel(name));
   }
   wxMultiChoiceDialog dialog(
-      parent, WxLabel("Scan the folder for these content types:"),
+      parent,
+      WxLabel(prompt.empty() ? "Scan the folder for these "
+                               "content types:"
+                             : prompt),
       WxLabel("Content Types"), choices);
   wxArrayInt all;
   for (int i = 0; i < int(choices.size()); i++) {
@@ -163,15 +168,65 @@ bool AskContentTypesForParent(wxWindow* parent,
   return true;
 }
 
-bool AskContentTypes(wxWindow* parent, std::set<XContentType>& chosen) {
-  return AskContentTypesForParent(parent, chosen);
-}
-
-bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen) {
+bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen,
+                     const std::string& prompt) {
   if (!window) {
     return false;
   }
-  return AskContentTypesForParent(PickParent(window), chosen);
+  return AskContentTypesForParent(PickParent(window), prompt, chosen);
+}
+
+void CollectFolderEntries(WxWindow* window, Emulator* emulator,
+                          const std::filesystem::path& dir,
+                          std::vector<Emulator::ContentInstallEntry>& out) {
+  if (!window || !emulator) {
+    return;
+  }
+  // Phase 1: the recursive walk runs on a worker under a pulsed dialog, so
+  // huge trees never freeze the UI before any feedback appears.
+  struct DiscoverJob {
+    std::atomic<bool> done{false};
+    std::atomic<bool> cancel{false};
+    std::vector<std::filesystem::path> found;
+  };
+  auto job = std::make_shared<DiscoverJob>();
+  std::thread worker([dir, job]() {
+    job->found = DiscoverContentPackages(dir, &job->cancel);
+    job->done.store(true);
+  });
+  wxWindow* parent = PickParent(window);
+  if (!parent) {
+    job->cancel.store(true);
+    worker.join();
+    return;
+  }
+  const std::string discover_msg =
+      "Discovering files in " + xe::path_to_utf8(dir.filename());
+  wxProgressDialog progress("Scanning content", WxLabel(discover_msg), 100,
+                            parent,
+                            wxPD_APP_MODAL | wxPD_CAN_ABORT | wxPD_AUTO_HIDE);
+  while (!job->done.load()) {
+    if (!progress.Pulse(WxLabel(discover_msg))) {
+      job->cancel.store(true);
+    }
+    wxMilliSleep(50);
+  }
+  worker.join();
+  progress.Update(100);
+  if (job->cancel.load() || job->found.empty()) {
+    return;
+  }
+  // Phase 2: type checklist, now stating how many packages were found.
+  std::set<XContentType> allowed_types;
+  if (!AskContentTypes(window, allowed_types,
+                       "Found " + std::to_string(job->found.size()) +
+                           " packages. Scan the folder for these content "
+                           "types:") ||
+      allowed_types.empty()) {
+    return;
+  }
+  // Phase 3: header reads on the UI thread under their own progress.
+  PrepareContentEntries(window, emulator, job->found, out, allowed_types);
 }
 
 void PrepareContentEntries(WxWindow* window, Emulator* emulator,
@@ -348,6 +403,10 @@ class WxContentPickDialog : public wxDialog {
     }
     const size_t from = entries_.size();
     PrepareContentEntries(window_, emulator, paths, entries_, allowed_types);
+    AppendNewRows(from);
+  }
+
+  void AppendNewRows(size_t from) {
     for (size_t i = from; i < entries_.size(); i++) {
       AddEntryRow(i);
     }
@@ -385,12 +444,10 @@ class WxContentPickDialog : public wxDialog {
         if (dir_dialog.ShowModal() != wxID_OK) {
           return;
         }
-        std::set<XContentType> allowed_types;
-        if (!AskContentTypes(this, allowed_types) || allowed_types.empty()) {
-          return;
-        }
-        AppendPaths(DiscoverContentPackages(WxToPath(dir_dialog.GetPath())),
-                    emulator_, allowed_types);
+        const size_t from = entries_.size();
+        CollectFolderEntries(window_, emulator_, WxToPath(dir_dialog.GetPath()),
+                             entries_);
+        AppendNewRows(from);
         break;
       }
       case AddSource::kCancel:
