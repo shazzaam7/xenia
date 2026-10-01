@@ -10,6 +10,7 @@
 #ifndef XENIA_APP_WX_CONTENT_PICK_DIALOG_H_
 #define XENIA_APP_WX_CONTENT_PICK_DIALOG_H_
 
+#include <atomic>
 #include <filesystem>
 #include <set>
 #include <vector>
@@ -34,15 +35,25 @@ void PrepareContentEntries(WxWindow* window, Emulator* emulator,
                            const std::set<XContentType>& allowed_types);
 
 // Modal checklist of content types to scan a folder for. All types start
-// checked. Returns false on Cancel; chosen holds the selected types.
-bool AskContentTypes(wxWindow* parent, std::set<XContentType>& chosen);
+// checked. An empty prompt selects the default message. Returns false on
+// Cancel; chosen holds the selected types.
 // Same, resolving the parent from the backend window.
-bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen);
+bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen,
+                     const std::string& prompt = {});
+
+// Full folder pipeline with progress throughout and no UI-thread freezes:
+// worker discovery (pulsed), type checklist, header reads (determinate).
+// Appends to out; out is untouched when cancelled at any stage.
+void CollectFolderEntries(WxWindow* window, Emulator* emulator,
+                          const std::filesystem::path& dir,
+                          std::vector<Emulator::ContentInstallEntry>& out);
 
 // Recursive discovery of content packages: regular files with CON/LIVE/PIRS
-// magic. Validation happens later in ProcessContentPackageHeader.
+// magic. Validation happens later in ProcessContentPackageHeader. Checks
+// cancel every entry when non-null.
 std::vector<std::filesystem::path> DiscoverContentPackages(
-    const std::filesystem::path& dir);
+    const std::filesystem::path& dir,
+    const std::atomic<bool>* cancel = nullptr);
 
 enum class ContentPickAction {
   kCancel,
