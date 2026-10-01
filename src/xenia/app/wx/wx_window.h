@@ -131,8 +131,7 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   void OnBootGame(size_t index, int disc_number) override;
   void OnRemoveGame(size_t index) override;
   void OnShowInFolder(size_t index) override;
-  void OnAddGame() override;
-  void OnScanFolder() override;
+  void OnAddGames() override;
   void OnViewContent(size_t index) override;
   void OnGameConfig(size_t index) override;
   void OnPatches(size_t index) override;
@@ -177,6 +176,10 @@ class WxWindow : public ui::Window, public WxLibraryView::Delegate {
   // Persists one in-memory entry to its title folder. No-op for a bad
   // index or before AttachLibrary.
   void SaveLibraryEntry(size_t index);
+
+  // Add-games entry points behind OnAddGames (file list vs folder scan).
+  void OnAddGame();
+  void OnScanFolder();
 
   // Shared close path for the frame close event.
   void CloseWindowNow();
