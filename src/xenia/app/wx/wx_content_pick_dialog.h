@@ -11,9 +11,12 @@
 #define XENIA_APP_WX_CONTENT_PICK_DIALOG_H_
 
 #include <filesystem>
+#include <set>
 #include <vector>
 
 #include "xenia/emulator.h"
+
+class wxWindow;
 
 namespace xe {
 namespace app {
@@ -23,11 +26,18 @@ class WxWindow;
 
 // Header-processes picked paths with a cancellable progress dialog (UI
 // thread; each package is just a header read). Invalid packages are omitted
-// silently. Appends to out, so it serves initial picks and in-dialog
-// additions alike.
+// silently, as are types outside allowed_types when it is non-empty.
+// Appends to out, so it serves initial picks and in-dialog additions alike.
 void PrepareContentEntries(WxWindow* window, Emulator* emulator,
                            const std::vector<std::filesystem::path>& paths,
-                           std::vector<Emulator::ContentInstallEntry>& out);
+                           std::vector<Emulator::ContentInstallEntry>& out,
+                           const std::set<XContentType>& allowed_types);
+
+// Modal checklist of content types to scan a folder for. All types start
+// checked. Returns false on Cancel; chosen holds the selected types.
+bool AskContentTypes(wxWindow* parent, std::set<XContentType>& chosen);
+// Same, resolving the parent from the backend window.
+bool AskContentTypes(WxWindow* window, std::set<XContentType>& chosen);
 
 // Recursive discovery of content packages: regular files with CON/LIVE/PIRS
 // magic. Validation happens later in ProcessContentPackageHeader.

@@ -20,6 +20,7 @@
 #pragma clang diagnostic pop
 #endif
 
+#include <set>
 #include <thread>
 
 #include "xenia/app/console_settings_dialog.h"
@@ -1957,6 +1958,9 @@ void EmulatorWindow::ImportScannedPaths(
 
 void EmulatorWindow::InstallContent() {
   std::vector<std::filesystem::path> paths;
+  // Empty means no type filtering (explicit files); folder scans fill it
+  // from the type checklist.
+  std::set<xe::XContentType> allowed_types;
 
 #ifdef XENIA_HAS_WX_UI
   // Picker flow when the library is attached: choose the source first, then
@@ -1987,7 +1991,9 @@ void EmulatorWindow::InstallContent() {
         dir_picker->set_title("Scan Folder for Content Packages");
         if (dir_picker->Show(window_.get())) {
           const auto& dirs = dir_picker->selected_files();
-          if (!dirs.empty()) {
+          if (!dirs.empty() &&
+              wx_ui::AskContentTypes(wx_window, allowed_types) &&
+              !allowed_types.empty()) {
             paths = wx_ui::DiscoverContentPackages(dirs.front());
           }
         }
@@ -2001,7 +2007,8 @@ void EmulatorWindow::InstallContent() {
     }
     auto picked =
         std::make_shared<std::vector<Emulator::ContentInstallEntry>>();
-    wx_ui::PrepareContentEntries(wx_window, emulator_, paths, *picked);
+    wx_ui::PrepareContentEntries(wx_window, emulator_, paths, *picked,
+                                 allowed_types);
     if (picked->empty()) {
       return;
     }
