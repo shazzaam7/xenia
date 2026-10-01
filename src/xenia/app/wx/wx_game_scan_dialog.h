@@ -23,6 +23,24 @@ namespace xe {
 namespace app {
 namespace wx_ui {
 
+class WxWindow;
+
+// How the user wants to supply games/content: explicit files or a folder
+// scan. Shared by the game picker, the content picker, and their entry
+// points so the choice looks and behaves the same everywhere.
+enum class AddSource {
+  kCancel,
+  kFiles,
+  kFolder,
+};
+
+// Modal one-click choice between picking files and scanning a folder.
+AddSource AskAddSource(wxWindow* parent, const std::string& title,
+                       const std::string& prompt);
+// Same, resolving the parent from the backend window.
+AddSource AskAddSource(WxWindow* window, const std::string& title,
+                       const std::string& prompt);
+
 // One scannable disc: the discovered path plus its readable metadata.
 struct ScannedGameItem {
   std::filesystem::path path;
@@ -46,8 +64,8 @@ std::vector<ScannedGameItem> CollectNewGamesFromFiles(
 
 // Modal multi-select over scanned games. Every row starts checked. compat
 // supplies the rating shown beside each title (missing IDs show none).
-// known_paths lets the in-dialog "Scan Another Folder" / "Add Another Game"
-// actions skip library discs without the caller. Returns the checked paths;
+// known_paths lets the in-dialog "Add More" action skip library discs
+// without the caller. Returns the checked paths;
 // empty when cancelled or nothing is checked.
 std::vector<std::filesystem::path> ShowScanPickerDialog(
     wxWindow* parent, const std::vector<ScannedGameItem>& items,
