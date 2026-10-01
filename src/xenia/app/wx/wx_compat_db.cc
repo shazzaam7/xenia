@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -52,6 +53,25 @@ std::string ToUpperHex(std::string text) {
     return c >= 'a' && c <= 'z' ? char(c - ('a' - 'A')) : char(c);
   });
   return text;
+}
+
+// True when both timestamps fall on the same local calendar day. Thread-safe
+// (localtime_s/localtime_r: plain localtime is not). A broken conversion
+// reads as "different day" so the caller refetches rather than trusting it.
+bool SameLocalDay(std::time_t a, std::time_t b) {
+  std::tm tm_a{};
+  std::tm tm_b{};
+#ifdef _WIN32
+  if (localtime_s(&tm_a, &a) != 0 || localtime_s(&tm_b, &b) != 0) {
+    return false;
+  }
+#else
+  if (!localtime_r(&a, &tm_a) || !localtime_r(&b, &tm_b)) {
+    return false;
+  }
+#endif
+  return tm_a.tm_year == tm_b.tm_year && tm_a.tm_mon == tm_b.tm_mon &&
+         tm_a.tm_mday == tm_b.tm_mday;
 }
 
 // CA bundle file for hermetic TLS (wolfSSL on non-Windows has no OS trust
@@ -301,8 +321,19 @@ bool CompatCacheFresh(const std::filesystem::path& storage_root) {
   if (ec) {
     return false;
   }
-  return (std::chrono::file_clock::now() - mtime) <
-         std::chrono::hours(kCompatCacheMaxAgeHours);
+  const auto now = std::chrono::file_clock::now();
+  if (mtime > now) {
+    // Clock skew or a copied-in file: don't punish a future timestamp with a
+    // download loop.
+    return true;
+  }
+  // Calendar-day rule in local time: a cache downloaded yesterday is stale
+  // even when less than 24h old, so each day's first load refetches. The
+  // now-delta hop keeps this portable: MSVC's file clock offers no to_sys().
+  const auto sys_mtime = std::chrono::system_clock::now() +
+                         (mtime - std::chrono::file_clock::now());
+  const std::time_t mtime_t = std::chrono::system_clock::to_time_t(sys_mtime);
+  return SameLocalDay(mtime_t, std::time(nullptr));
 }
 
 namespace {

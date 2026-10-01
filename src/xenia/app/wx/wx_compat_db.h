@@ -84,10 +84,9 @@ bool HttpGet(const std::string& url, std::string* body);
 std::filesystem::path CompatCachePath(
     const std::filesystem::path& storage_root);
 
-// Hours after which the cache is considered stale.
-constexpr int kCompatCacheMaxAgeHours = 24;
-
-// True when a usable cache file exists and is younger than the max age.
+// True when the cache file was written today (local calendar day). A file from
+// a previous day is stale even when less than 24h old, so each day's first
+// load refetches.
 bool CompatCacheFresh(const std::filesystem::path& storage_root);
 
 // Called with the fetch result on the fetch worker thread (never the UI

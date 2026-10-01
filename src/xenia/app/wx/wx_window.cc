@@ -952,28 +952,30 @@ void WxWindow::CompatMapForScanPicker(CompatMap* out) {
     return;
   }
   const auto cache = CompatCachePath(library_storage_root_);
-  if (LoadCompatFile(cache, out)) {
+  // Fresh cache (written today): silent, no network.
+  if (CompatCacheFresh(library_storage_root_) && LoadCompatFile(cache, out)) {
     return;
   }
-  // Nothing usable on disk (first run, or a cache that was deleted): download
-  // it so the picker shows real ratings rather than Unknown for everything.
-  // Only the missing-data case reaches here, so this never adds latency to the
-  // common path.
+  // Missing or stale (a previous day's download): fetch so the picker shows
+  // current ratings rather than old ones or Unknown for everything. Only this
+  // case pays network latency.
   CompatMap fetched;
-  if (!FetchCompatWithProgress("Downloading compatibility ratings...", true,
-                               &fetched)) {
-    // Cancelled, offline, or no report for these titles: the picker falls back
-    // to Unknown and the post-import RefreshCompat retries in the background.
+  if (FetchCompatWithProgress("Downloading compatibility ratings...", true,
+                              &fetched)) {
+    // Remember it: later scans and FillMissingCompat reuse this, and the
+    // library badges get the new ratings without waiting for a refresh.
+    // Note: copy, not move — compat_ must stay populated after this returns.
+    compat_ = fetched;
+    if (library_view_) {
+      ApplyCompatMap(compat_);
+    }
+    *out = compat_;
     return;
   }
-  // Remember it: later scans and FillMissingCompat reuse this, and the
-  // library badges get the new ratings without waiting for a refresh.
-  // Note: copy, not move — compat_ must stay populated after this returns.
-  compat_ = fetched;
-  if (library_view_) {
-    ApplyCompatMap(compat_);
-  }
-  *out = compat_;
+  // Cancelled or offline: yesterday's ratings beat none. LoadCompatFile leaves
+  // `out` untouched when even the stale file is unusable, and the picker then
+  // shows Unknown.
+  LoadCompatFile(cache, out);
 }
 
 void WxWindow::ScanLibraryFolder(const std::filesystem::path& dir) {
@@ -1276,9 +1278,10 @@ void WxWindow::RefreshCompat(bool force) {
     }
     return;
   }
-  // A download is due (manual Refresh, or a stale/missing cache): run it under
-  // the same cancellable progress dialog the scan picker uses, so every
-  // compatibility download looks the same. The worker is joined before
+  // A download is due: a manual Refresh always refetches (force bypasses the
+  // fast path above), as does a stale/missing cache on the automatic path.
+  // Run it under the same cancellable progress dialog the scan picker uses, so
+  // every compatibility download looks the same. The worker is joined before
   // returning, so unlike the old detached fetch this needs no lifetime token.
   compat_fetching_ = true;
   CompatMap fetched;
