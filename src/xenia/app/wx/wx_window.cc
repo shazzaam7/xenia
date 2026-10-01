@@ -1341,6 +1341,23 @@ void WxWindow::OnShowInFolder(size_t index) {
   }
 }
 
+void WxWindow::OnAddGames() {
+  if (!library_view_) {
+    return;
+  }
+  switch (AskAddSource(library_view_, "Add Games",
+                       "Add games from files or by scanning a folder?")) {
+    case AddSource::kFiles:
+      OnAddGame();
+      break;
+    case AddSource::kFolder:
+      OnScanFolder();
+      break;
+    case AddSource::kCancel:
+      break;
+  }
+}
+
 void WxWindow::OnAddGame() {
   if (!library_view_) {
     return;

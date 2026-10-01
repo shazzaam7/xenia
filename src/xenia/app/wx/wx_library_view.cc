@@ -67,8 +67,7 @@ constexpr int kGridBallInsetPx = 3;
 enum : int {
   kIdSearch = wxID_HIGHEST + 100,
   kIdMode,
-  kIdAdd,
-  kIdScan,
+  kIdAddGames,
   kIdMenuBoot,
   kIdMenuDisc,
   kIdMenuFolder,
@@ -126,8 +125,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   wxInitAllImageHandlers();
 
   auto bar = new wxBoxSizer(wxHORIZONTAL);
-  auto add = new wxButton(this, kIdAdd, "Add Game");
-  auto scan = new wxButton(this, kIdScan, "Scan Folder");
+  auto add_games = new wxButton(this, kIdAddGames, "Add Games");
   auto mode = new wxChoice(this, kIdMode);
   mode->Append("List");
   mode->Append("Grid");
@@ -135,8 +133,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   search_ = new wxSearchCtrl(this, kIdSearch);
   search_->SetHint("Search library");
   search_->ShowCancelButton(true);
-  bar->Add(add, 0, wxRIGHT, FromDIP(8));
-  bar->Add(scan, 0, wxRIGHT, FromDIP(8));
+  bar->Add(add_games, 0, wxRIGHT, FromDIP(8));
   bar->Add(mode, 0, wxRIGHT, FromDIP(8));
   bar->Add(search_, 1, wxEXPAND);
 
@@ -148,8 +145,8 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   book_->AddPage(table_, "List");
   book_->AddPage(grid_, "Grid");
 
-  empty_hint_ = new wxStaticText(this, wxID_ANY,
-                                 "No games yet. Use Add Game or Scan Folder.");
+  empty_hint_ =
+      new wxStaticText(this, wxID_ANY, "No games yet. Use Add Games.");
 
   auto sizer = new wxBoxSizer(wxVERTICAL);
   sizer->Add(bar, 0, wxEXPAND | wxALL, FromDIP(8));
@@ -167,8 +164,7 @@ WxLibraryView::WxLibraryView(wxWindow* parent, Delegate* delegate,
   Bind(wxEVT_TEXT, &WxLibraryView::OnSearch, this, kIdSearch);
   Bind(wxEVT_SEARCH_CANCEL, &WxLibraryView::OnSearchCancel, this, kIdSearch);
   Bind(wxEVT_CHOICE, &WxLibraryView::OnMode, this, kIdMode);
-  Bind(wxEVT_BUTTON, &WxLibraryView::OnAdd, this, kIdAdd);
-  Bind(wxEVT_BUTTON, &WxLibraryView::OnScan, this, kIdScan);
+  Bind(wxEVT_BUTTON, &WxLibraryView::OnAddGames, this, kIdAddGames);
   Bind(wxEVT_MENU, &WxLibraryView::OnMenu, this, kIdMenuBoot, kIdMenuEditInfo);
   table_->Bind(wxEVT_LIST_COL_CLICK, &WxLibraryView::OnSortColumn, this);
   table_->Bind(wxEVT_MOTION, &WxLibraryView::OnHoverTable, this);
@@ -590,15 +586,9 @@ void WxLibraryView::OnContextGrid(wxListEvent& event) {
   ShowContext(grid_, event.GetPoint());
 }
 
-void WxLibraryView::OnAdd(wxCommandEvent&) {
+void WxLibraryView::OnAddGames(wxCommandEvent&) {
   if (delegate_) {
-    delegate_->OnAddGame();
-  }
-}
-
-void WxLibraryView::OnScan(wxCommandEvent&) {
-  if (delegate_) {
-    delegate_->OnScanFolder();
+    delegate_->OnAddGames();
   }
 }
 

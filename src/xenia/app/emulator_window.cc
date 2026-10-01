@@ -62,6 +62,7 @@
 #include "xenia/app/wx/wx_content_pick_dialog.h"
 #include "xenia/app/wx/wx_game_config_dialog.h"
 #include "xenia/app/wx/wx_game_scan.h"
+#include "xenia/app/wx/wx_game_scan_dialog.h"
 #include "xenia/app/wx/wx_profile_dialog.h"
 #include "xenia/app/wx/wx_window.h"
 #endif
@@ -1957,27 +1958,47 @@ void EmulatorWindow::ImportScannedPaths(
 void EmulatorWindow::InstallContent() {
   std::vector<std::filesystem::path> paths;
 
-  auto file_picker = xe::ui::FilePicker::Create();
-  file_picker->set_mode(ui::FilePicker::Mode::kOpen);
-  file_picker->set_type(ui::FilePicker::Type::kFile);
-  file_picker->set_multi_selection(true);
-  file_picker->set_title("Select Content Package");
-  file_picker->set_extensions({
-      {"All Files (*.*)", "*.*"},
-  });
-  if (file_picker->Show(window_.get())) {
-    paths = file_picker->selected_files();
-  }
-
-  if (paths.empty()) {
-    return;
-  }
-
 #ifdef XENIA_HAS_WX_UI
-  // Picker flow when the library is attached: choose packages first, then
-  // install or extract only the checked ones.
+  // Picker flow when the library is attached: choose the source first, then
+  // choose packages, then install or extract only the checked ones.
   if (auto* wx_window = static_cast<wx_ui::WxWindow*>(window_.get());
       wx_window->IsLibraryAttached()) {
+    switch (wx_ui::AskAddSource(wx_window, "Add Content",
+                                "Add content packages from files or by "
+                                "scanning a folder?")) {
+      case wx_ui::AddSource::kFiles: {
+        auto file_picker = xe::ui::FilePicker::Create();
+        file_picker->set_mode(ui::FilePicker::Mode::kOpen);
+        file_picker->set_type(ui::FilePicker::Type::kFile);
+        file_picker->set_multi_selection(true);
+        file_picker->set_title("Select Content Package");
+        file_picker->set_extensions({
+            {"All Files (*.*)", "*.*"},
+        });
+        if (file_picker->Show(window_.get())) {
+          paths = file_picker->selected_files();
+        }
+        break;
+      }
+      case wx_ui::AddSource::kFolder: {
+        auto dir_picker = xe::ui::FilePicker::Create();
+        dir_picker->set_mode(ui::FilePicker::Mode::kOpen);
+        dir_picker->set_type(ui::FilePicker::Type::kDirectory);
+        dir_picker->set_title("Scan Folder for Content Packages");
+        if (dir_picker->Show(window_.get())) {
+          const auto& dirs = dir_picker->selected_files();
+          if (!dirs.empty()) {
+            paths = wx_ui::DiscoverContentPackages(dirs.front());
+          }
+        }
+        break;
+      }
+      case wx_ui::AddSource::kCancel:
+        return;
+    }
+    if (paths.empty()) {
+      return;
+    }
     auto picked =
         std::make_shared<std::vector<Emulator::ContentInstallEntry>>();
     wx_ui::PrepareContentEntries(wx_window, emulator_, paths, *picked);
